@@ -15,6 +15,114 @@ const EXTENSION_FOLDER = (() => {
 
 console.log("[GeomPack Gaussian v2] Loading extension...");
 
+function ensureGeompackConfirmDialog() {
+    if (window.__GEOMPACK_CONFIRM_DIALOG__) {
+        return window.__GEOMPACK_CONFIRM_DIALOG__;
+    }
+
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.background = "rgba(0,0,0,0.55)";
+    overlay.style.display = "none";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+    overlay.style.zIndex = "100000";
+
+    const panel = document.createElement("div");
+    panel.style.width = "min(420px, calc(100vw - 32px))";
+    panel.style.background = "#1f1f1f";
+    panel.style.border = "1px solid #3d3d3d";
+    panel.style.borderRadius = "10px";
+    panel.style.boxShadow = "0 10px 30px rgba(0,0,0,0.45)";
+    panel.style.padding = "14px 14px 12px 14px";
+    panel.style.color = "#ddd";
+    panel.style.fontFamily = "Inter, Segoe UI, sans-serif";
+
+    const titleEl = document.createElement("div");
+    titleEl.style.fontSize = "14px";
+    titleEl.style.fontWeight = "700";
+    titleEl.style.marginBottom = "8px";
+
+    const messageEl = document.createElement("div");
+    messageEl.style.fontSize = "12px";
+    messageEl.style.color = "#bdbdbd";
+    messageEl.style.lineHeight = "1.45";
+    messageEl.style.whiteSpace = "pre-wrap";
+
+    const actions = document.createElement("div");
+    actions.style.marginTop = "14px";
+    actions.style.display = "flex";
+    actions.style.justifyContent = "flex-end";
+    actions.style.gap = "8px";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.style.border = "1px solid #555";
+    cancelBtn.style.background = "#2d2d2d";
+    cancelBtn.style.color = "#ddd";
+    cancelBtn.style.padding = "6px 12px";
+    cancelBtn.style.borderRadius = "6px";
+    cancelBtn.style.cursor = "pointer";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.style.border = "1px solid #4f6bd6";
+    confirmBtn.style.background = "#4f6bd6";
+    confirmBtn.style.color = "#fff";
+    confirmBtn.style.padding = "6px 12px";
+    confirmBtn.style.borderRadius = "6px";
+    confirmBtn.style.cursor = "pointer";
+
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+
+    panel.appendChild(titleEl);
+    panel.appendChild(messageEl);
+    panel.appendChild(actions);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    let resolver = null;
+    const close = (value) => {
+        overlay.style.display = "none";
+        const fn = resolver;
+        resolver = null;
+        if (fn) fn(!!value);
+    };
+
+    overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) close(false);
+    });
+
+    cancelBtn.addEventListener("click", () => close(false));
+    confirmBtn.addEventListener("click", () => close(true));
+
+    const show = ({ title, message, confirmText, cancelText, level }) => {
+        titleEl.textContent = title || "Confirm";
+        messageEl.textContent = message || "Please confirm this operation.";
+        confirmBtn.textContent = confirmText || "Confirm";
+        cancelBtn.textContent = cancelText || "Cancel";
+
+        if (level === "danger") {
+            confirmBtn.style.background = "#c74646";
+            confirmBtn.style.borderColor = "#c74646";
+        } else if (level === "warning") {
+            confirmBtn.style.background = "#b87922";
+            confirmBtn.style.borderColor = "#b87922";
+        } else {
+            confirmBtn.style.background = "#4f6bd6";
+            confirmBtn.style.borderColor = "#4f6bd6";
+        }
+
+        overlay.style.display = "flex";
+        return new Promise((resolve) => {
+            resolver = resolve;
+        });
+    };
+
+    window.__GEOMPACK_CONFIRM_DIALOG__ = { show };
+    return window.__GEOMPACK_CONFIRM_DIALOG__;
+}
+
 app.registerExtension({
     name: "geompack.gaussianpreview.v2",
 
@@ -285,6 +393,23 @@ app.registerExtension({
                             console.error('[GeomPack Gaussian v2] Error stack:', error.stack);
                             infoPanel.innerHTML = `<div style="color: #ff6b6b;">Error saving camera: ${error.message}</div>`;
                         }
+                    }
+                    else if (event.data.type === 'PRESET_CONFIRM_REQUEST' && event.data.request_id) {
+                        const dialog = ensureGeompackConfirmDialog();
+                        const confirmed = await dialog.show({
+                            title: event.data.title,
+                            message: event.data.message,
+                            confirmText: event.data.confirm_text,
+                            cancelText: event.data.cancel_text,
+                            level: event.data.level
+                        });
+
+                        iframe.contentWindow?.postMessage({
+                            type: 'PRESET_CONFIRM_RESULT',
+                            request_id: event.data.request_id,
+                            confirmed,
+                            timestamp: Date.now()
+                        }, '*');
                     }
                     // Handle render results for Render node
                     else if (event.data.type === 'RENDER_RESULT' && event.data.request_id && event.data.image) {

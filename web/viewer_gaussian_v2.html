@@ -60,15 +60,45 @@
         #controlsBar {
             display: flex;
             flex-wrap: wrap;
-            justify-content: center;
+            justify-content: flex-start;
             align-items: center;
-            gap: calc(4px * var(--ui-scale)) calc(8px * var(--ui-scale));
+            gap: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
             background: #252525;
             padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
             border-top: 1px solid #333;
             flex-shrink: 0;
             width: 100%;
             z-index: 100;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: calc(4px * var(--ui-scale));
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid #3a3a3a;
+            border-radius: calc(6px * var(--ui-scale));
+            padding: calc(4px * var(--ui-scale)) calc(6px * var(--ui-scale));
+            min-height: calc(30px * var(--ui-scale));
+        }
+
+        .control-group.preset-group {
+            margin-left: auto;
+        }
+
+        .group-label {
+            color: #a9a9a9;
+            font-size: calc(10px * var(--ui-scale));
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            margin-right: calc(2px * var(--ui-scale));
+            white-space: nowrap;
+        }
+
+        @media (max-width: 900px) {
+            .control-group.preset-group {
+                margin-left: 0;
+            }
         }
 
         #controlsBar button {
@@ -259,38 +289,53 @@
     </div>
 
     <div id="controlsBar">
-        <div class="scale-control">
-            <span>Scale:</span>
-            <input type="number" id="gaussianScaleValue" min="0.01" max="100" step="0.1" value="1.0" title="Gaussian scale multiplier">
+        <div class="control-group view-group">
+            <span class="group-label">View</span>
+            <button id="resetCamera" title="Reset camera view">Reset View</button>
+            <button id="toggleHelp" title="Show keyboard shortcuts">?</button>
         </div>
-        <button id="resetCamera" title="Reset camera view">Reset View</button>
-        <div id="overlayControl" class="scale-control">
-            <span>Overlay:</span>
-            <input type="range" id="overlayAlpha" min="0" max="1" step="0.01" value="0.5" title="Overlay image transparency">
-            <input type="number" id="overlayAlphaValue" min="0" max="1" step="0.01" value="0.5" title="Overlay alpha value">
+
+        <div class="control-group camera-group">
+            <span class="group-label">Camera</span>
+            <div class="scale-control">
+                <span>Focal:</span>
+                <input type="range" id="focalScale" min="0.2" max="3.0" step="0.01" value="1.0" title="Focal length scale">
+                <input type="number" id="focalScaleValue" min="0.2" max="3.0" step="0.01" value="1.0" title="Focal length scale value">
+            </div>
+            <button id="setCamera" title="Save current camera for render">Set Camera</button>
         </div>
-        <div class="scale-control">
-            <span>Focal:</span>
-            <input type="range" id="focalScale" min="0.2" max="3.0" step="0.01" value="1.0" title="Focal length scale">
-            <input type="number" id="focalScaleValue" min="0.2" max="3.0" step="0.01" value="1.0" title="Focal length scale value">
+
+        <div class="control-group display-group">
+            <span class="group-label">Display</span>
+            <div class="scale-control">
+                <span>Scale:</span>
+                <input type="number" id="gaussianScaleValue" min="0.01" max="100" step="0.1" value="1.0" title="Gaussian scale multiplier">
+            </div>
+            <div id="overlayControl" class="scale-control">
+                <span>Overlay:</span>
+                <input type="range" id="overlayAlpha" min="0" max="1" step="0.01" value="0.5" title="Overlay image transparency">
+                <input type="number" id="overlayAlphaValue" min="0" max="1" step="0.01" value="0.5" title="Overlay alpha value">
+            </div>
         </div>
-        <button id="toggleHelp" title="Show keyboard shortcuts">?</button>
-        <div class="preset-control">
-            <span>Preset:</span>
-            <select id="presetScope" title="Preset scope">
-                <option value="global">Global</option>
-                <option value="mesh">Current Mesh</option>
-            </select>
-            <input type="text" id="presetName" placeholder="preset name" title="Preset name">
-            <button id="savePreset" title="Save current camera as preset">Save</button>
-            <select id="presetSelect" title="Select a preset">
-                <option value="">(No Preset)</option>
-            </select>
-            <button id="applyPreset" title="Apply selected preset">Apply</button>
-            <button id="deletePreset" title="Delete selected preset">Delete</button>
-            <span id="presetStatus"></span>
+
+        <div class="control-group preset-group">
+            <span class="group-label">Presets</span>
+            <div class="preset-control">
+                <span>Preset:</span>
+                <select id="presetScope" title="Preset scope">
+                    <option value="global">Global</option>
+                    <option value="mesh">Current Mesh</option>
+                </select>
+                <input type="text" id="presetName" placeholder="preset name" title="Preset name">
+                <button id="savePreset" title="Save current camera as preset">Save</button>
+                <select id="presetSelect" title="Select a preset">
+                    <option value="">(No Preset)</option>
+                </select>
+                <button id="applyPreset" title="Apply selected preset">Apply</button>
+                <button id="deletePreset" title="Delete selected preset">Delete</button>
+                <span id="presetStatus"></span>
+            </div>
         </div>
-        <button id="setCamera" title="Save current camera for render">Set Camera</button>
     </div>
 
     <!-- Load bundled gsplat.js -->
@@ -485,6 +530,33 @@
         const CAMERA_PRESET_STORAGE_KEY = 'geompack_camera_presets_v1';
         let currentMeshKey = null;
         let presetOptionMap = new Map();
+        const pendingPresetConfirmResolvers = new Map();
+
+        function requestPresetConfirm(options = {}) {
+            return new Promise((resolve) => {
+                const requestId = `preset_confirm_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+                const timeout = setTimeout(() => {
+                    pendingPresetConfirmResolvers.delete(requestId);
+                    resolve(false);
+                }, 30000);
+
+                pendingPresetConfirmResolvers.set(requestId, (result) => {
+                    clearTimeout(timeout);
+                    resolve(!!result);
+                });
+
+                window.parent.postMessage({
+                    type: 'PRESET_CONFIRM_REQUEST',
+                    request_id: requestId,
+                    title: options.title || 'Confirm',
+                    message: options.message || 'Please confirm this operation.',
+                    confirm_text: options.confirmText || 'Confirm',
+                    cancel_text: options.cancelText || 'Cancel',
+                    level: options.level || 'info',
+                    timestamp: Date.now()
+                }, '*');
+            });
+        }
 
         // Resume the animation loop (used after pausing for screenshot/clipboard)
         function resumeAnimationLoop() {
@@ -1202,6 +1274,17 @@
             return lastCameraTarget || controls.target || controls._target || controls.cameraTarget || null;
         }
 
+        function toSplatVector3(v, fallback = null) {
+            if (!v || typeof v !== 'object') return fallback;
+            const x = Number(v.x);
+            const y = Number(v.y);
+            const z = Number(v.z);
+            if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+                return fallback;
+            }
+            return new SPLAT.Vector3(x, y, z);
+        }
+
         function showPresetStatus(text, isError = false) {
             if (!presetStatusEl) return;
             presetStatusEl.textContent = text || '';
@@ -1266,6 +1349,7 @@
                 target: target ? { x: target.x, y: target.y, z: target.z } : null,
                 fx: camera.data?.fx || null,
                 fy: camera.data?.fy || null,
+                roll: Number.isFinite(controls.currentRoll) ? controls.currentRoll : 0,
                 image_width: nativeImageWidth || canvasRef?.width || null,
                 image_height: nativeImageHeight || canvasRef?.height || null,
                 scale: currentScale || 1.0,
@@ -1314,7 +1398,7 @@
             }
         }
 
-        function saveCurrentPreset() {
+        async function saveCurrentPreset() {
             const presetName = (presetNameEl?.value || '').trim();
             const scope = presetScopeEl?.value || 'global';
             if (!presetName) {
@@ -1351,7 +1435,13 @@
             };
 
             if (existingIndex >= 0) {
-                const ok = window.confirm(`Preset "${presetName}" already exists. Overwrite?`);
+                const ok = await requestPresetConfirm({
+                    title: 'Overwrite Preset',
+                    message: `Preset "${presetName}" already exists. Overwrite it?`,
+                    confirmText: 'Overwrite',
+                    cancelText: 'Cancel',
+                    level: 'warning'
+                });
                 if (!ok) {
                     showPresetStatus('Save cancelled');
                     return;
@@ -1389,7 +1479,7 @@
             showPresetStatus('Preset applied');
         }
 
-        function deleteSelectedPreset() {
+        async function deleteSelectedPreset() {
             const selectedKey = presetSelectEl?.value;
             if (!selectedKey || !presetOptionMap.has(selectedKey)) {
                 showPresetStatus('Select a preset first', true);
@@ -1397,7 +1487,13 @@
             }
             const selected = presetOptionMap.get(selectedKey);
             const presetName = selected?.preset?.name || 'unnamed';
-            const ok = window.confirm(`Delete preset "${presetName}"?`);
+            const ok = await requestPresetConfirm({
+                title: 'Delete Preset',
+                message: `Delete preset "${presetName}"? This action cannot be undone.`,
+                confirmText: 'Delete',
+                cancelText: 'Cancel',
+                level: 'danger'
+            });
             if (!ok) return;
 
             const store = loadPresetStore();
@@ -1425,10 +1521,11 @@
             }
             console.log('[GaussianViewer] Applying camera state:', cameraState);
 
-            const position = cameraState.position;
-            const target = cameraState.target;
+            const position = toSplatVector3(cameraState.position, null);
+            const target = toSplatVector3(cameraState.target, null);
             const fx = cameraState.fx;
             const fy = cameraState.fy;
+            const roll = Number(cameraState.roll);
             const scale = cameraState.scale;
 
             if (fx) {
@@ -1441,18 +1538,28 @@
             }
 
             if (position) {
-                camera.position.x = position.x ?? camera.position.x;
-                camera.position.y = position.y ?? camera.position.y;
-                camera.position.z = position.z ?? camera.position.z;
+                camera.position.x = position.x;
+                camera.position.y = position.y;
+                camera.position.z = position.z;
             }
 
             if (target && controls.setCameraTarget) {
                 controls.setCameraTarget(target);
             }
 
+            if (Number.isFinite(roll)) {
+                controls.currentRoll = roll;
+                controls.targetRoll = roll;
+            }
+
             if (scale) {
                 updateGaussianScale(scale);
             }
+
+            // After loading a preset focal as the new base, UI scale should reset to 1.0
+            // to avoid hidden multiplier drift on subsequent user adjustments.
+            if (focalScaleInput) focalScaleInput.value = 1.0;
+            if (focalScaleValue) focalScaleValue.value = 1.0;
 
             controls.update();
             scheduleFrameLayoutUpdate();
@@ -1492,6 +1599,7 @@
                 target: target ? { x: target.x, y: target.y, z: target.z } : null,
                 fx: camera.data?.fx || null,
                 fy: camera.data?.fy || null,
+                roll: Number.isFinite(controls.currentRoll) ? controls.currentRoll : 0,
                 image_width: imageWidth,
                 image_height: imageHeight,
                 scale: currentScale || 1.0,
@@ -1843,6 +1951,12 @@
                 const aspectRatio = event.data?.output_aspect_ratio;
                 updateOutputSettings(resolution, aspectRatio);
                 console.log('[GaussianViewer] Updated output settings:', outputSettings);
+            } else if (type === 'PRESET_CONFIRM_RESULT' && event.data?.request_id) {
+                const resolver = pendingPresetConfirmResolvers.get(event.data.request_id);
+                if (resolver) {
+                    pendingPresetConfirmResolvers.delete(event.data.request_id);
+                    resolver(event.data.confirmed === true);
+                }
             } else if (type) {
                 console.log('[GaussianViewer] Unhandled message type:', type);
             }
