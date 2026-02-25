@@ -114,6 +114,44 @@
             margin: 0;
         }
 
+        .preset-control {
+            display: flex;
+            align-items: center;
+            gap: calc(4px * var(--ui-scale));
+            flex-shrink: 0;
+        }
+
+        .preset-control span {
+            color: #888;
+            font-size: calc(10px * var(--ui-scale));
+            white-space: nowrap;
+        }
+
+        .preset-control input,
+        .preset-control select {
+            background: #333;
+            border: 1px solid #555;
+            color: #fff;
+            font-size: calc(10px * var(--ui-scale));
+            padding: calc(3px * var(--ui-scale)) calc(5px * var(--ui-scale));
+            border-radius: calc(3px * var(--ui-scale));
+        }
+
+        #presetName {
+            width: calc(120px * var(--ui-scale));
+        }
+
+        #presetSelect {
+            min-width: calc(140px * var(--ui-scale));
+            max-width: calc(220px * var(--ui-scale));
+        }
+
+        #presetStatus {
+            color: #9ad;
+            font-size: calc(10px * var(--ui-scale));
+            min-width: calc(80px * var(--ui-scale));
+        }
+
         #overlayControl {
             display: none;
         }
@@ -237,6 +275,21 @@
             <input type="number" id="focalScaleValue" min="0.2" max="3.0" step="0.01" value="1.0" title="Focal length scale value">
         </div>
         <button id="toggleHelp" title="Show keyboard shortcuts">?</button>
+        <div class="preset-control">
+            <span>Preset:</span>
+            <select id="presetScope" title="Preset scope">
+                <option value="global">Global</option>
+                <option value="mesh">Current Mesh</option>
+            </select>
+            <input type="text" id="presetName" placeholder="preset name" title="Preset name">
+            <button id="savePreset" title="Save current camera as preset">Save</button>
+            <select id="presetSelect" title="Select a preset">
+                <option value="">(No Preset)</option>
+            </select>
+            <button id="applyPreset" title="Apply selected preset">Apply</button>
+            <button id="deletePreset" title="Delete selected preset">Delete</button>
+            <span id="presetStatus"></span>
+        </div>
         <button id="setCamera" title="Save current camera for render">Set Camera</button>
     </div>
 
@@ -428,6 +481,10 @@
             resolution: 1024,
             aspectRatio: "source"
         };
+
+        const CAMERA_PRESET_STORAGE_KEY = 'geompack_camera_presets_v1';
+        let currentMeshKey = null;
+        let presetOptionMap = new Map();
 
         // Resume the animation loop (used after pausing for screenshot/clipboard)
         function resumeAnimationLoop() {
@@ -1145,6 +1202,222 @@
             return lastCameraTarget || controls.target || controls._target || controls.cameraTarget || null;
         }
 
+        function showPresetStatus(text, isError = false) {
+            if (!presetStatusEl) return;
+            presetStatusEl.textContent = text || '';
+            presetStatusEl.style.color = isError ? '#ff8a8a' : '#9ad';
+            if (showPresetStatus._timer) {
+                clearTimeout(showPresetStatus._timer);
+            }
+            if (text) {
+                showPresetStatus._timer = setTimeout(() => {
+                    presetStatusEl.textContent = '';
+                }, 2200);
+            }
+        }
+
+        function loadPresetStore() {
+            try {
+                const raw = localStorage.getItem(CAMERA_PRESET_STORAGE_KEY);
+                if (!raw) {
+                    return { version: 1, global: [], by_mesh: {} };
+                }
+                const parsed = JSON.parse(raw);
+                return {
+                    version: 1,
+                    global: Array.isArray(parsed.global) ? parsed.global : [],
+                    by_mesh: parsed.by_mesh && typeof parsed.by_mesh === 'object' ? parsed.by_mesh : {}
+                };
+            } catch (err) {
+                console.warn('[GaussianViewer] Failed to parse preset store:', err);
+                return { version: 1, global: [], by_mesh: {} };
+            }
+        }
+
+        function savePresetStore(store) {
+            localStorage.setItem(CAMERA_PRESET_STORAGE_KEY, JSON.stringify(store));
+        }
+
+        function getPresetBucket(store, scope, createIfMissing = false) {
+            if (scope === 'mesh') {
+                if (!currentMeshKey) return null;
+                if (!Array.isArray(store.by_mesh[currentMeshKey])) {
+                    if (!createIfMissing) return null;
+                    store.by_mesh[currentMeshKey] = [];
+                }
+                return store.by_mesh[currentMeshKey];
+            }
+            if (!Array.isArray(store.global)) {
+                store.global = [];
+            }
+            return store.global;
+        }
+
+        function getCurrentCameraStateSnapshot() {
+            if (!camera || !controls) return null;
+            const target = getCameraTarget();
+            const canvasRef = renderer?.canvas;
+            return {
+                position: {
+                    x: camera.position.x,
+                    y: camera.position.y,
+                    z: camera.position.z
+                },
+                target: target ? { x: target.x, y: target.y, z: target.z } : null,
+                fx: camera.data?.fx || null,
+                fy: camera.data?.fy || null,
+                image_width: nativeImageWidth || canvasRef?.width || null,
+                image_height: nativeImageHeight || canvasRef?.height || null,
+                scale: currentScale || 1.0,
+                scale_compensation: gaussianScaleCompensation || null
+            };
+        }
+
+        function refreshPresetOptions(preferredValue = null) {
+            if (!presetSelectEl) return;
+            const store = loadPresetStore();
+            const globalPresets = Array.isArray(store.global) ? store.global : [];
+            const meshPresets = currentMeshKey && Array.isArray(store.by_mesh[currentMeshKey])
+                ? store.by_mesh[currentMeshKey]
+                : [];
+
+            presetOptionMap = new Map();
+            presetSelectEl.innerHTML = '';
+
+            const empty = document.createElement('option');
+            empty.value = '';
+            empty.textContent = '(No Preset)';
+            presetSelectEl.appendChild(empty);
+
+            let i = 1;
+            for (const p of globalPresets) {
+                const value = `g:${i++}`;
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.textContent = `[Global] ${p.name || 'unnamed'}`;
+                presetOptionMap.set(value, { scope: 'global', preset: p });
+                presetSelectEl.appendChild(opt);
+            }
+            for (const p of meshPresets) {
+                const value = `m:${i++}`;
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.textContent = `[Mesh] ${p.name || 'unnamed'}`;
+                presetOptionMap.set(value, { scope: 'mesh', preset: p });
+                presetSelectEl.appendChild(opt);
+            }
+
+            if (preferredValue && presetOptionMap.has(preferredValue)) {
+                presetSelectEl.value = preferredValue;
+            } else {
+                presetSelectEl.value = '';
+            }
+        }
+
+        function saveCurrentPreset() {
+            const presetName = (presetNameEl?.value || '').trim();
+            const scope = presetScopeEl?.value || 'global';
+            if (!presetName) {
+                showPresetStatus('Please input preset name', true);
+                return;
+            }
+            if (scope === 'mesh' && !currentMeshKey) {
+                showPresetStatus('Load mesh first for mesh preset', true);
+                return;
+            }
+
+            const cameraState = getCurrentCameraStateSnapshot();
+            if (!cameraState) {
+                showPresetStatus('Camera not ready', true);
+                return;
+            }
+
+            const store = loadPresetStore();
+            const bucket = getPresetBucket(store, scope, true);
+            if (!bucket) {
+                showPresetStatus('Preset bucket unavailable', true);
+                return;
+            }
+
+            const existingIndex = bucket.findIndex(p => p?.name === presetName);
+            const now = Date.now();
+            const preset = {
+                name: presetName,
+                scope,
+                meshKey: scope === 'mesh' ? currentMeshKey : null,
+                camera_state: cameraState,
+                created_at: existingIndex >= 0 ? (bucket[existingIndex].created_at || now) : now,
+                updated_at: now
+            };
+
+            if (existingIndex >= 0) {
+                const ok = window.confirm(`Preset "${presetName}" already exists. Overwrite?`);
+                if (!ok) {
+                    showPresetStatus('Save cancelled');
+                    return;
+                }
+                bucket[existingIndex] = preset;
+            } else {
+                bucket.push(preset);
+            }
+
+            savePresetStore(store);
+            refreshPresetOptions();
+            const selected = [...presetOptionMap.entries()].find(([, v]) => v.preset.name === presetName && v.scope === scope);
+            if (selected) {
+                presetSelectEl.value = selected[0];
+            }
+            showPresetStatus('Preset saved');
+        }
+
+        function applySelectedPreset() {
+            const selectedKey = presetSelectEl?.value;
+            if (!selectedKey || !presetOptionMap.has(selectedKey)) {
+                showPresetStatus('Select a preset first', true);
+                return;
+            }
+            const selected = presetOptionMap.get(selectedKey);
+            const cameraState = selected?.preset?.camera_state;
+            if (!cameraState) {
+                showPresetStatus('Invalid preset camera state', true);
+                return;
+            }
+            applyCameraState(JSON.parse(JSON.stringify(cameraState)));
+            if (presetNameEl) {
+                presetNameEl.value = selected.preset.name || '';
+            }
+            showPresetStatus('Preset applied');
+        }
+
+        function deleteSelectedPreset() {
+            const selectedKey = presetSelectEl?.value;
+            if (!selectedKey || !presetOptionMap.has(selectedKey)) {
+                showPresetStatus('Select a preset first', true);
+                return;
+            }
+            const selected = presetOptionMap.get(selectedKey);
+            const presetName = selected?.preset?.name || 'unnamed';
+            const ok = window.confirm(`Delete preset "${presetName}"?`);
+            if (!ok) return;
+
+            const store = loadPresetStore();
+            const bucket = getPresetBucket(store, selected.scope, false);
+            if (!bucket) {
+                showPresetStatus('Preset bucket missing', true);
+                return;
+            }
+
+            const idx = bucket.findIndex(p => p?.name === presetName);
+            if (idx < 0) {
+                showPresetStatus('Preset not found', true);
+                return;
+            }
+            bucket.splice(idx, 1);
+            savePresetStore(store);
+            refreshPresetOptions();
+            showPresetStatus('Preset deleted');
+        }
+
         function applyCameraState(cameraState) {
             if (!camera || !controls || !cameraState) {
                 console.warn('[GaussianViewer] applyCameraState skipped - missing camera/controls/state');
@@ -1420,6 +1693,14 @@
         focalScaleValue.addEventListener('change', (e) => applyFocalScale(e.target.value));
 
         const ratioSelect = document.getElementById('ratioSelect');
+        const presetScopeEl = document.getElementById('presetScope');
+        const presetNameEl = document.getElementById('presetName');
+        const presetSelectEl = document.getElementById('presetSelect');
+        const savePresetBtn = document.getElementById('savePreset');
+        const applyPresetBtn = document.getElementById('applyPreset');
+        const deletePresetBtn = document.getElementById('deletePreset');
+        const presetStatusEl = document.getElementById('presetStatus');
+
         function setAspectRatio(value) {
             outputSettings.aspectRatio = value || "source";
             if (ratioSelect) {
@@ -1459,6 +1740,26 @@
                 setAspectRatio(e.target.value);
             });
         }
+
+        if (savePresetBtn) {
+            savePresetBtn.addEventListener('click', saveCurrentPreset);
+        }
+        if (applyPresetBtn) {
+            applyPresetBtn.addEventListener('click', applySelectedPreset);
+        }
+        if (deletePresetBtn) {
+            deletePresetBtn.addEventListener('click', deleteSelectedPreset);
+        }
+        if (presetSelectEl) {
+            presetSelectEl.addEventListener('change', () => {
+                const selected = presetOptionMap.get(presetSelectEl.value);
+                if (selected && presetNameEl) {
+                    presetNameEl.value = selected.preset.name || '';
+                }
+            });
+        }
+
+        refreshPresetOptions();
 
 
         // Event listeners
@@ -1510,6 +1811,8 @@
                 console.log('[GaussianViewer] Received LOAD_MESH_DATA, size:', data.byteLength);
                 console.log('[GaussianViewer] Extrinsics:', extrinsics);
                 console.log('[GaussianViewer] Intrinsics:', intrinsics);
+                currentMeshKey = filename || null;
+                refreshPresetOptions();
 
                 const overlayImage = document.getElementById('overlayImage');
                 const overlayControl = document.getElementById('overlayControl');
