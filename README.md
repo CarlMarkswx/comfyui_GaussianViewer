@@ -1,6 +1,6 @@
 # ComfyUI-GaussianViewer
 
-[English](README_EN.md) | [中文](README.md)
+This is my (Matt Hallett) fork to include code for automatic display scaling, which makes the node much easier to use.   
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 
