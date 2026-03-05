@@ -142,6 +142,18 @@
         .scale-control input[type="range"] {
             width: calc(60px * var(--ui-scale));
             margin: 0;
+            vertical-align: middle;
+        }
+
+        /* Adjustments for new integer scale slider */
+        #gaussianScaleValue {
+            width: calc(80px * var(--ui-scale));
+        }
+        #gaussianScaleDisplay {
+            color: #fff;
+            font-size: calc(10px * var(--ui-scale));
+            min-width: 16px;
+            text-align: center;
         }
 
         .preset-control {
@@ -309,7 +321,13 @@
             <span class="group-label">Display</span>
             <div class="scale-control">
                 <span>Scale:</span>
-                <input type="number" id="gaussianScaleValue" min="0.01" max="100" step="0.1" value="1.0" title="Gaussian scale multiplier">
+                <input type="range" id="gaussianScaleValue" min="1" max="30" step="1" value="11" title="Gaussian scale multiplier">
+                <span id="gaussianScaleDisplay">11</span>
+                <button id="autoScaleBtn" title="Reset Scale to Auto (11)">Auto</button>
+                <label style="display: flex; align-items: center; gap: 4px; color: #ccc; font-size: calc(10px * var(--ui-scale)); margin-left: calc(8px * var(--ui-scale)); cursor: pointer;" title="Dynamically adjust scale based on camera distance and FOV">
+                    <input type="checkbox" id="dynamicScaleToggle" style="margin: 0; cursor: pointer;" checked>
+                    Dynamic
+                </label>
             </div>
             <div id="overlayControl" class="scale-control">
                 <span>Overlay:</span>
@@ -371,6 +389,19 @@
         let lastSceneCenter = null;
         let lastSceneSize = null;
 
+        let baseDistance = null;
+        let isDynamicScaleEnabled = true;
+
+        function updateBaseDistance() {
+            if (!camera || !lastSceneCenter) return;
+            const pos = initialCameraData ? initialCameraData.position : camera.position;
+            const dx = pos.x - lastSceneCenter.x;
+            const dy = pos.y - lastSceneCenter.y;
+            const dz = pos.z - lastSceneCenter.z;
+            baseDistance = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1.0;
+            console.log('[GaussianViewer] Base distance set to:', baseDistance.toFixed(2));
+        }
+
         // Default focal length
         const DEFAULT_FOCAL_LENGTH = 30;
         const SCALE_DENSITY_BOOST = 3.0;
@@ -412,20 +443,15 @@
                 camera.data.fy = DEFAULT_FOCAL_LENGTH;
                 baseFocalLength = camera.data.fx;
                 baseFocalY = camera.data.fy;
-                console.log(`[GaussianViewer] Applied focal length: fx=${camera.data.fx}, fy=${camera.data.fy}`);
-                console.log(`[GaussianViewer] Base focal length stored: baseFx=${baseFocalLength}, baseFy=${baseFocalY}`);
                 
                 // Calculate and log FOV for default settings
                 const canvasHeight = canvas.clientHeight || 512;
                 const defaultFovY = 2 * Math.atan(canvasHeight / (2 * camera.data.fy));
                 const defaultFovYDeg = defaultFovY * 180 / Math.PI;
-                console.log(`[GaussianViewer] Default FOV Y (with canvas height ${canvasHeight}): ${defaultFovYDeg.toFixed(2)} degrees`);
 
                 // Handle resize
                 const resize = () => {
                     // Only resize renderer if resolution is NOT locked
-                    // If locked, the canvas resolution stays fixed (e.g. at 2K),
-                    // and CSS handles the visual fitting to container.
                     if (!isResolutionLocked) {
                         renderer.setSize(canvas.clientWidth, canvas.clientHeight);
                         nativeAspect = (canvas.clientWidth || 1) / (canvas.clientHeight || 1);
@@ -437,11 +463,39 @@
                 scheduleFrameLayoutUpdate();
 
                 // Start render loop
+                let lastIdealScale = -1;
+
                 const frame = () => {
                     controls.update();
                     updateCameraInfoDisplay();
                     renderer.render(scene, camera);
                     animationId = requestAnimationFrame(frame);
+
+                    // Real-Time Dynamic Scale Update
+                    if (isDynamicScaleEnabled && camera && lastSceneCenter && baseDistance) {
+                        const currentFocal = camera.data.fx || baseFocalLength;
+                        
+                        const dx = camera.position.x - lastSceneCenter.x;
+                        const dy = camera.position.y - lastSceneCenter.y;
+                        const dz = camera.position.z - lastSceneCenter.z;
+                        const currentDistance = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1.0;
+                        
+                        const distRatio = currentDistance / baseDistance;
+                        const focalRatio = baseFocalLength / currentFocal;
+                        
+                        // Scale factoring with dampening curve so it scales smoothly
+                        const scaleFactor = Math.pow(distRatio * focalRatio, 0.85); 
+                        let idealScale = Math.round(11.0 * scaleFactor);
+                        idealScale = Math.max(1, Math.min(30, idealScale));
+                        
+                        // Only attempt to dispatch an update if the integer value boundary actually changed
+                        if (idealScale !== lastIdealScale) {
+                            lastIdealScale = idealScale;
+                            if (idealScale !== currentScale) {
+                                updateGaussianScale(idealScale);
+                            }
+                        }
+                    }
                 };
                 frame();
 
@@ -479,24 +533,8 @@
                             if (controls?.setCameraTarget) {
                                 controls.setCameraTarget(nextTarget);
                             }
-                            console.log('[GaussianViewer] Dolly forward', {
-                                step,
-                                distance,
-                                target: nextTarget
-                            });
                         }
                     }
-                    console.log('[GaussianViewer] Wheel zoom', {
-                        deltaY: event.deltaY,
-                        zoomSpeed: controls?.zoomSpeed,
-                        minZoom: controls?.minZoom,
-                        maxZoom: controls?.maxZoom,
-                        cameraPos: camera ? { x: camera.position.x, y: camera.position.y, z: camera.position.z } : null,
-                        target,
-                        targetDistance: distance,
-                        fx: camera?.data?.fx,
-                        fy: camera?.data?.fy
-                    });
                 }, { passive: true });
 
                 console.log('[GaussianViewer] Initialized successfully');
@@ -570,23 +608,12 @@
         }
 
         // Set camera from extrinsics and intrinsics
-        // extrinsics: 4x4 matrix (identity for SHARP = camera at origin looking down +Z)
-        // intrinsics: 3x3 matrix [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
-        // splat: the loaded Gaussian splat object (optional, used for bounds)
         function setCameraFromExtrinsics(extrinsics, intrinsics, splat) {
             if (!camera || !controls) return;
 
-            console.log('[GaussianViewer] Setting camera from extrinsics/intrinsics');
-            console.log('[GaussianViewer] Extrinsics:', JSON.stringify(extrinsics));
-            console.log('[GaussianViewer] Intrinsics:', JSON.stringify(intrinsics));
-
-            // Parse extrinsics to get camera position
-            // For a 4x4 extrinsics matrix [R|t], camera position in world space is -R^T * t
-            // But for identity matrix, camera is simply at origin
             let camPosX = 0, camPosY = 0, camPosZ = 0;
 
             if (extrinsics && Array.isArray(extrinsics) && extrinsics.length === 4) {
-                // Extract rotation and translation from 4x4 extrinsics
                 const R = [
                     [extrinsics[0][0], extrinsics[0][1], extrinsics[0][2]],
                     [extrinsics[1][0], extrinsics[1][1], extrinsics[1][2]],
@@ -594,158 +621,59 @@
                 ];
                 const t = [extrinsics[0][3], extrinsics[1][3], extrinsics[2][3]];
 
-                // Camera position = -R^T * t
                 camPosX = -(R[0][0] * t[0] + R[1][0] * t[1] + R[2][0] * t[2]);
                 camPosY = -(R[0][1] * t[0] + R[1][1] * t[1] + R[2][1] * t[2]);
                 camPosZ = -(R[0][2] * t[0] + R[1][2] * t[1] + R[2][2] * t[2]);
-
-                console.log('[GaussianViewer] Computed camera position from extrinsics:', camPosX, camPosY, camPosZ);
             }
 
-            // Calculate FOV and set camera focal length from intrinsics
-            // intrinsics[0][0] = fx (focal length in pixels)
-            // intrinsics[1][1] = fy (focal length in pixels)
-            // intrinsics[1][2] = cy (principal point y = image_height / 2)
             let targetZ = 2; // default
             if (intrinsics && Array.isArray(intrinsics) && intrinsics.length >= 2) {
                 const fx = intrinsics[0][0];
                 const fy = intrinsics[1][1];
                 const cx = intrinsics[0][2];
                 const cy = intrinsics[1][2];
-                const imageWidth = cx * 2;  // cx is typically image_width / 2
-                const imageHeight = cy * 2; // cy is typically image_height / 2
+                const imageWidth = cx * 2;  
+                const imageHeight = cy * 2; 
 
-                console.log('[GaussianViewer] Intrinsics: fx=', fx, 'fy=', fy, 'cx=', cx, 'cy=', cy);
-                console.log('[GaussianViewer] Image dimensions (from intrinsics):', imageWidth, 'x', imageHeight);
-
-                // Determine if we should lock resolution to native image size
-                // We lock resolution if intrinsics are provided to ensure "WYSIWYG" with high-res output
                 isResolutionLocked = true;
                 
-                // Get current container size for scale compensation calculation
                 const containerWidth = canvas.clientWidth || 512;
                 const containerHeight = canvas.clientHeight || 512;
 
-                // Lock renderer size to NATIVE image resolution
-                console.log(`[GaussianViewer] Locking resolution to native: ${imageWidth}x${imageHeight}`);
                 renderer.setSize(imageWidth, imageHeight);
                 
                 nativeAspect = imageWidth / imageHeight;
                 updateCanvasDisplaySize();
 
-                // Use NATIVE focal length (no scaling down)
                 camera.data.fx = fx;
                 camera.data.fy = fy;
                 baseFocalLength = fx;
                 baseFocalY = fy;
 
-                // IMPORTANT: Calculate scale compensation
-                // gsplat.js renders points based on their world space size projected to screen space.
-                // When we view a 2048x2048 image in a 512x512 container, we are effectively zooming out.
-                // To make the points appear as "solid" as they do in the original training view,
-                // we need to compensate for this difference.
-                
-                // Empirical observation suggests we need a stronger compensation than just the ratio.
-                // If user says Scale ~14 is good when ratio is ~4 (2048/512), then compensation might be squared ratio?
-                // Or maybe the points from this trainer are just naturally small.
-                // Let's stick to linear ratio for now but allow a base multiplier.
-                
-                // For now, let's trust the ratio but maybe add a boost factor if needed.
-                // User reported needing ~14x scale. If image is 2048 and container 512, ratio is 4.
-                // 14 / 4 = 3.5. So maybe there's an inherent factor of 3-4 missing?
-                // Actually, let's just apply the ratio logic strictly first:
-                // If I render at 2048px width, a point of size 1 world unit covers X pixels.
-                // If I render at 512px width, it covers X/4 pixels.
-                // But visually, if I look at the 2048px image scaled down to 512px on my screen (via CSS),
-                // the point covers X pixels of the *buffer*, which is X/4 pixels on *screen*.
-                // Wait, if we render at high res, the points are physically "correct" size in pixels for that resolution.
-                // The issue is likely that "correct" size is often too sparse for point clouds that rely on splatting overlap.
-                
-                // Let's use the ratio, but ensure we aren't double counting.
-                gaussianScaleCompensation = imageWidth / containerWidth;
-                
-                // Add an extra boost because often raw splats are too small without the "dilation" effect of low-res rendering
-                // When you render low-res, rasterization snaps to pixels, effectively making small points relatively larger.
-                // High-res rendering loses this "free aliasing coverage".
-                // Let's add a heuristic boost factor.
-                // User said 14x was good. 14 / (2048/512) = 3.5.
-                // Let's try boosting the compensation significantly.
-                // gaussianScaleCompensation *= 3.0; // Boost factor
-                
-                // Actually, let's change how we calculate this.
-                // If the user wants "WYSIWYG" relative to the preview size:
-                // We want the point to cover the same *percentage* of the screen width.
-                // PointRadius / ImageWidth = Constant.
-                // If we increase ImageWidth by factor S, PointRadius must increase by factor S.
-                // This is what gaussianScaleCompensation = imageWidth / containerWidth does.
-                
-                // However, the user reports it's still sparse. This implies the *base* size is too small.
-                // Maybe the "preview" logic in other viewers implicitly boosts size?
-                // Or maybe the training output relies on a specific focal length?
-                
-                // Let's force a minimum compensation to avoid sparsity.
-                // And let's default the UI scale slider to something higher if we detect high-res?
-                // No, better to fix the compensation calculation.
-                
-                // Let's try applying a stronger multiplier.
-                // If resolution is locked, we are in "High Res Mode".
-                // Let's scale up by the ratio AND a bit more.
                 gaussianScaleCompensation = computeScaleCompensation(imageWidth, containerWidth);
-
-                console.log('[GaussianViewer] Native resolution:', imageWidth, 'x', imageHeight);
-                console.log('[GaussianViewer] Container size:', containerWidth, 'x', containerHeight);
-                console.log('[GaussianViewer] Gaussian scale compensation (with boost):', gaussianScaleCompensation.toFixed(2), 'x');
-
-                // Calculate vertical FOV in radians for logging
-                const fovY = 2 * Math.atan(imageHeight / (2 * fy));
-                const fovYDeg = fovY * 180 / Math.PI;
-                console.log('[GaussianViewer] Calculated FOV:', fovYDeg, 'degrees');
-
-                // For SHARP, the scene is in front of the camera
-                // Use focal length to estimate a reasonable target distance
-                // The disparity range in metadata can help estimate scene depth
-                // For now, use a simple heuristic based on typical SHARP output
                 targetZ = Math.max(1, fy / imageHeight * 2);
-                console.log('[GaussianViewer] Target Z distance:', targetZ);
             }
 
-            // Determine the target position (what the camera looks at)
-            // For the INITIAL view (matching original image), look STRAIGHT AHEAD along Z axis
-            // NOT at the scene center - that would tilt the camera
             let targetX = 0, targetY = 0;
-            let orbitZ = targetZ;  // For orbiting, use a closer point
+            let orbitZ = targetZ;  
             if (splat && splat.bounds) {
                 const center = splat.bounds.center();
                 const size = splat.bounds.size();
 
-                // Use scene center Z for the view direction
                 targetZ = center.z;
 
-                // For orbit center, use distance to closest object + 50%
-                // Camera is at origin, so minZ is the distance to closest point
                 const minZ = center.z - size.z / 2;
-                orbitZ = minZ * 1.5;  // 50% past the closest point
+                orbitZ = minZ * 1.5;  
 
-                console.log('[GaussianViewer] Scene center:', center.x, -center.y, center.z);
-                console.log('[GaussianViewer] Closest point Z:', minZ.toFixed(1));
-                console.log('[GaussianViewer] Orbit center Z:', orbitZ.toFixed(1), '(closest + 50%)');
                 lastSceneCenter = center;
                 lastSceneSize = size;
             }
 
-            // SHARP uses Y-down coordinate system, so flip camera Y as well
             camPosY = -camPosY;
 
-            // For SHARP: camera is at origin, scene is at positive Z
-            // The orbit controls work by having the camera orbit around a target point.
-            // To get the "original image view", we set camera at the computed position
-            // and look at the scene center.
-
             const camPos = new SPLAT.Vector3(camPosX, camPosY, camPosZ);
-            // Use orbitZ for the target - closer to camera for better orbit feel
             const targetPos = new SPLAT.Vector3(targetX, targetY, orbitZ);
 
-            // Store for reset
             initialCameraData = {
                 position: camPos,
                 target: targetPos,
@@ -753,23 +681,13 @@
                 fy: camera.data.fy
             };
 
-            // Set camera position - IMPORTANT: must set camera.position, not camera.data.position
-            // camera.position is used by OrbitControls
-            // camera.data.position is used for rendering
             camera.position.x = camPosX;
             camera.position.y = camPosY;
             camera.position.z = camPosZ;
 
-            // Update orbit controls to orbit around the target point
-            // This recalculates the internal orbit state from current camera.position
             controls.setCameraTarget(targetPos);
-
-            console.log('[GaussianViewer] Camera set to position:', camPosX, camPosY, camPosZ);
-            console.log('[GaussianViewer] Looking at target:', targetX, targetY, targetZ);
-            console.log('[GaussianViewer] This should match the original input image view');
         }
 
-        // Load a PLY file from ArrayBuffer data
         function buildMeshSignature(filename, intrinsics) {
             const intrinsicKey = intrinsics ? JSON.stringify(intrinsics) : "none";
             return `${filename || "unknown"}::${intrinsicKey}`;
@@ -787,15 +705,16 @@
                     nativeImageHeight = null;
                     cachedSplatData = null;
                     lastMeshSignature = meshSignature;
-                    currentScale = 1.0;
-                    if (scaleInput) {
-                        scaleInput.value = 1.0;
-                    }
+                    
+                    // Reset to pure defaults
+                    currentScale = 11.0; 
+                    lastScaleValue = 11.0; // Sets baseline so updateGaussianScale doesn't duplicate
+                    if (scaleInput) scaleInput.value = 11;
+                    if (scaleDisplay) scaleDisplay.textContent = '11';
                 }
 
                 const hasIntrinsics = Array.isArray(intrinsics) && intrinsics.length >= 2;
                 if (!hasIntrinsics) {
-                    // Reset lock state when native resolution is unknown
                     isResolutionLocked = false;
                 } else {
                     const cx = intrinsics[0][2];
@@ -808,56 +727,47 @@
                     updateCanvasDisplaySize();
                 }
                 
-                // Clear ALL existing objects from scene
                 if (scene.objects && scene.objects.length > 0) {
-                    console.log('[GaussianViewer] Clearing', scene.objects.length, 'existing objects from scene');
-                    // Remove all objects (iterate backwards to avoid index issues)
                     while (scene.objects.length > 0) {
                         scene.removeObject(scene.objects[0]);
                     }
                 }
                 currentSplat = null;
 
-                // Pre-calculate scale compensation from intrinsics BEFORE loading
-                // This ensures gaussian scales are correct from the start
-                gaussianScaleCompensation = 1.0;  // Default if no intrinsics
+                gaussianScaleCompensation = 1.0; 
                 if (intrinsics && Array.isArray(intrinsics) && intrinsics.length >= 2) {
                     const cx = intrinsics[0][2];
                     const imageWidth = cx * 2;
                     const containerWidth = canvas.clientWidth || 512;
-
                     gaussianScaleCompensation = computeScaleCompensation(imageWidth, containerWidth);
-
-                    console.log('[GaussianViewer] Pre-calculated scale compensation:', gaussianScaleCompensation.toFixed(2), 'x');
-                    console.log('[GaussianViewer] Ratio:', (imageWidth / containerWidth).toFixed(2), 'Density Boost:', SCALE_DENSITY_BOOST);
-                    console.log('[GaussianViewer] (Image:', imageWidth, 'px / Container:', containerWidth, 'px)');
                 }
 
                 console.log('[GaussianViewer] Loading from data, size:', arrayBuffer.byteLength);
 
-                // Create a blob URL from the data
                 const blob = new Blob([arrayBuffer], { type: 'application/octet-stream' });
                 const blobUrl = URL.createObjectURL(blob);
 
-                // Load the PLY file from blob URL using PLYLoader
-                await SPLAT.PLYLoader.LoadAsync(blobUrl, scene);
+                try {
+                    // Try the V2 blob method
+                    await SPLAT.PLYLoader.LoadAsync(blobUrl, scene);
+                    setTimeout(() => { URL.revokeObjectURL(blobUrl); }, 30000);
+                } catch (blobError) {
+                    // FALLBACK: If browser Web Worker sandbox blocks the blob: URL with "failed to fetch"
+                    // we immediately clean up and fetch the file directly via URL (V1 method)
+                    console.warn('[GaussianViewer] Blob URL fetch failed (likely Web Worker sandbox policy). Falling back to direct URL...', blobError);
+                    URL.revokeObjectURL(blobUrl);
+                    const directUrl = `/view?filename=${encodeURIComponent(filename)}&type=output&subfolder=`;
+                    await SPLAT.PLYLoader.LoadAsync(directUrl, scene);
+                }
 
-                // Clean up blob URL
-                URL.revokeObjectURL(blobUrl);
-
-                // Get the loaded splat (last object in scene)
                 if (scene.objects && scene.objects.length > 0) {
                     currentSplat = scene.objects[scene.objects.length - 1];
 
-                    // Log bounds info for debugging
                     if (currentSplat.bounds) {
                         const center = currentSplat.bounds.center();
                         const size = currentSplat.bounds.size();
-                        console.log('[GaussianViewer] Scene bounds center:', center.x, center.y, center.z);
-                        console.log('[GaussianViewer] Scene bounds size:', size.x, size.y, size.z);
                     }
 
-                    // Cache original splat buffers so we can reattach after worker detaches
                     if (currentSplat.data && currentSplat.data.positions && currentSplat.data.rotations && currentSplat.data.colors && currentSplat.data.selection) {
                         cachedSplatData = {
                             positions: new Float32Array(currentSplat.data.positions),
@@ -869,63 +779,25 @@
                         cachedSplatData = null;
                     }
 
-                    // Store original scales and log statistics
                     if (currentSplat.data && currentSplat.data.scales) {
                         const scales = currentSplat.data.scales;
-                        const numGaussians = scales.length / 3;
-                        let minScale = Infinity, maxScale = -Infinity, sumScale = 0;
 
-                        // Store a copy of original scales (BEFORE compensation) for dynamic adjustment
-                        // The stored scales include the compensation factor so user scale=1 shows correct size
                         originalScales = new Float32Array(scales.length);
                         for (let i = 0; i < scales.length; i++) {
-                            // Apply compensation: gaussians need to be larger when focal length is scaled down
                             originalScales[i] = scales[i] * gaussianScaleCompensation;
                         }
-                        console.log('[GaussianViewer] Stored compensated scales (factor:', gaussianScaleCompensation.toFixed(2), 'x)');
 
-                        // Apply compensated scales immediately
+                        // NATIVELY APPLY DEFAULT SCALE TO PREVENT WEBGL BLANK SCREENS ON LOAD
                         for (let i = 0; i < scales.length; i++) {
-                            scales[i] = originalScales[i];
+                            scales[i] = originalScales[i] * currentScale; 
                         }
 
-                        // Mark data as changed so gsplat.js re-uploads to GPU
                         currentSplat.data.changed = true;
-
-                        for (let i = 0; i < scales.length; i++) {
-                            const s = scales[i];
-                            minScale = Math.min(minScale, s);
-                            maxScale = Math.max(maxScale, s);
-                            sumScale += s;
-                        }
-
-                        const avgScale = sumScale / scales.length;
-                        console.log('[GaussianViewer] === GAUSSIAN SCALE DEBUG (after compensation) ===');
-                        console.log('[GaussianViewer] Number of Gaussians:', numGaussians);
-                        console.log('[GaussianViewer] Compensated scale min:', minScale.toFixed(6));
-                        console.log('[GaussianViewer] Compensated scale max:', maxScale.toFixed(6));
-                        console.log('[GaussianViewer] Compensated scale avg:', avgScale.toFixed(6));
-                        console.log('[GaussianViewer] =================================================');
                     } else {
-                        console.log('[GaussianViewer] No scales data found on splat object');
-                        console.log('[GaussianViewer] Splat properties:', Object.keys(currentSplat));
-                        if (currentSplat.data) {
-                            console.log('[GaussianViewer] Splat.data properties:', Object.keys(currentSplat.data));
-                        }
                         originalScales = null;
-                    }
-
-                    // Reapply current scale (preserve across re-runs for same mesh)
-                    if (currentScale !== 1.0) {
-                        updateGaussianScale(currentScale);
-                    } else if (scaleInput) {
-                        scaleInput.value = 1.0;
                     }
                 }
 
-                // Set camera from extrinsics and intrinsics if provided
-                // Only set camera on first load (when initialCameraData doesn't exist)
-                // This preserves user's manual camera adjustments between workflow executions
                 if ((extrinsics || intrinsics) && !initialCameraData) {
                     setCameraFromExtrinsics(extrinsics, intrinsics, currentSplat);
                     if (controls) controls.update();
@@ -936,11 +808,11 @@
                     baseFocalY = camera.data.fy;
                 }
 
-                // Show info panel
                 infoPanel.classList.remove('hidden');
                 infoContent.innerHTML = `<span style="color:#6cc;">Gaussian Splat Loaded</span><br><span style="color:#888;">${filename}</span>`;
 
-                // Notify parent
+                updateBaseDistance();
+
                 window.parent.postMessage({
                     type: 'MESH_LOADED',
                     error: null,
@@ -961,17 +833,14 @@
             }
         }
 
-        // Reset camera to initial position
         function resetCamera() {
             if (camera && controls) {
                 if (initialCameraData) {
-                    // Set camera.position (used by OrbitControls), not camera.data.position
                     const pos = initialCameraData.position;
                     camera.position.x = pos.x;
                     camera.position.y = pos.y;
                     camera.position.z = pos.z;
 
-                    // Restore focal lengths
                     if (initialCameraData.fx) {
                         camera.data.fx = initialCameraData.fx;
                         baseFocalLength = initialCameraData.fx;
@@ -981,7 +850,6 @@
                         baseFocalY = initialCameraData.fy;
                     }
 
-                    // Set the target - this recalculates orbit state from current camera.position
                     if (initialCameraData.target) {
                         controls.setCameraTarget(initialCameraData.target);
                     }
@@ -990,49 +858,43 @@
                         controls.resetRoll();
                     }
 
-                    console.log('[GaussianViewer] Reset camera to position:', pos.x, pos.y, pos.z);
-                    console.log('[GaussianViewer] Reset camera target:', initialCameraData.target?.x, initialCameraData.target?.y, initialCameraData.target?.z);
                 } else {
-                    // Default fallback
                     camera.position.x = 0;
                     camera.position.y = 0;
                     camera.position.z = 5;
-                    console.log('[GaussianViewer] Reset camera to default position (0, 0, 5)');
                     if (controls.resetRoll) {
                         controls.resetRoll();
                     }
                 }
+
                 controls.update();
                 focalScaleInput.value = 1.0;
                 focalScaleValue.value = 1.0;
                 applyFocalScale(1.0);
+                
+                // If dynamic scale is ON, resync the base distance when resetting view
+                if (isDynamicScaleEnabled) {
+                    updateBaseDistance();
+                }
+                
                 scheduleFrameLayoutUpdate();
             }
         }
 
-        // Helper to draw black background behind transparent canvas for screenshot
-        // This solves the issue where transparent parts of the gaussian render appear weirdly when pasted
-        // or viewed in tools that don't handle premultiplied alpha correctly, or simply when the
-        // viewer background (CSS) was providing the black color but the canvas itself was transparent.
         function getCanvasWithBlackBackground(sourceCanvas) {
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = sourceCanvas.width;
             tempCanvas.height = sourceCanvas.height;
             const ctx = tempCanvas.getContext('2d');
             
-            // Fill with black first
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
             
-            // Draw original canvas on top
             ctx.drawImage(sourceCanvas, 0, 0);
             
             return tempCanvas;
         }
 
-        // Take screenshot directly from canvas
-        // Avoiding captureStream() because it can introduce artifacts or capture inter-frame states
-        // Since we are now rendering at full resolution (WYSIWYG), toDataURL is the most accurate representation
         async function takeScreenshot() {
             if (!renderer || !renderer.canvas) return;
 
@@ -1041,19 +903,13 @@
                 const width = canvas.width;
                 const height = canvas.height;
 
-                // Pause the animation loop to ensure we capture a stable frame
                 if (animationId) cancelAnimationFrame(animationId);
 
-                // Force a single synchronous render to ensure the buffer is populated exactly as expected
                 if (scene && camera) {
                     controls.update();
                     renderer.render(scene, camera);
                 }
 
-                console.log('[GaussianViewer] Capturing screenshot via toDataURL:', width, 'x', height);
-
-                // Composite with black background to ensure consistency with preview
-                // The preview looks black because of CSS background, but the canvas might be transparent
                 const finalCanvas = getCanvasWithBlackBackground(canvas);
                 const dataUrl = finalCanvas.toDataURL('image/png');
 
@@ -1064,7 +920,6 @@
                 }, '*');
 
                 resumeAnimationLoop();
-                console.log('[GaussianViewer] Screenshot captured successfully');
             } catch (err) {
                 console.error('[GaussianViewer] Screenshot error:', err);
                 resumeAnimationLoop();
@@ -1352,7 +1207,7 @@
                 roll: Number.isFinite(controls.currentRoll) ? controls.currentRoll : 0,
                 image_width: nativeImageWidth || canvasRef?.width || null,
                 image_height: nativeImageHeight || canvasRef?.height || null,
-                scale: currentScale || 1.0,
+                scale: currentScale || 11.0,
                 scale_compensation: gaussianScaleCompensation || null
             };
         }
@@ -1552,12 +1407,15 @@
                 controls.targetRoll = roll;
             }
 
+            if (dynamicScaleToggle && dynamicScaleToggle.checked) {
+                dynamicScaleToggle.checked = false;
+                isDynamicScaleEnabled = false;
+            }
+
             if (scale) {
                 updateGaussianScale(scale);
             }
 
-            // After loading a preset focal as the new base, UI scale should reset to 1.0
-            // to avoid hidden multiplier drift on subsequent user adjustments.
             if (focalScaleInput) focalScaleInput.value = 1.0;
             if (focalScaleValue) focalScaleValue.value = 1.0;
 
@@ -1566,13 +1424,11 @@
             console.log('[GaussianViewer] applyCameraState complete');
         }
 
-        // Save camera parameters to parent for render node
         function setCameraParams() {
             console.log('[GaussianViewer] ===== SET CAMERA PARAMS STARTED =====');
             
             if (!renderer || !camera || !controls) {
                 console.warn('[GaussianViewer] WARNING: Cannot set camera params - required objects missing');
-                console.log(`[GaussianViewer] renderer: ${!!renderer}, camera: ${!!camera}, controls: ${!!controls}`);
                 return;
             }
 
@@ -1580,15 +1436,6 @@
             const canvas = renderer.canvas;
             const imageWidth = nativeImageWidth || canvas?.width || null;
             const imageHeight = nativeImageHeight || canvas?.height || null;
-
-            console.log('[GaussianViewer] Current camera state:');
-            console.log(`  - Position: x=${camera.position.x}, y=${camera.position.y}, z=${camera.position.z}`);
-            console.log(`  - Target: ${target ? `x=${target.x}, y=${target.y}, z=${target.z}` : 'null'}`);
-            console.log(`  - Focal length: fx=${camera.data?.fx}, fy=${camera.data?.fy}`);
-            console.log(`  - Canvas size: ${canvas?.width}x${canvas?.height}`);
-            console.log(`  - Image size used: ${imageWidth}x${imageHeight}`);
-            console.log(`  - Scale: ${currentScale}`);
-            console.log(`  - Scale compensation: ${gaussianScaleCompensation}`);
 
             const cameraState = {
                 position: {
@@ -1602,12 +1449,9 @@
                 roll: Number.isFinite(controls.currentRoll) ? controls.currentRoll : 0,
                 image_width: imageWidth,
                 image_height: imageHeight,
-                scale: currentScale || 1.0,
+                scale: currentScale || 11.0,
                 scale_compensation: gaussianScaleCompensation || null
             };
-
-            console.log('[GaussianViewer] Sending camera state to parent:');
-            console.log(JSON.stringify(cameraState, null, 2));
 
             window.parent.postMessage({
                 type: 'SET_CAMERA_PARAMS',
@@ -1615,39 +1459,36 @@
                 timestamp: Date.now()
             }, '*');
 
-            console.log('[GaussianViewer] Message posted to parent window');
-            console.log('[GaussianViewer] ===== SET CAMERA PARAMS COMPLETE =====');
             scheduleFrameLayoutUpdate();
         }
 
-        // Gaussian scale control
+        // --- NEW REAL-TIME GAUSSIAN SCALE CONTROL ---
         const scaleInput = document.getElementById('gaussianScaleValue');
-        let currentScale = 1.0;
-        let scaleUpdatePending = false;
-        let lastScaleValue = 1.0;
+        const scaleDisplay = document.getElementById('gaussianScaleDisplay');
+        const autoScaleBtn = document.getElementById('autoScaleBtn');
+        let currentScale = 11.0; 
+        let lastScaleValue = -1; // Force initialize on load
 
         function updateGaussianScale(newScale) {
-            newScale = Math.max(0.01, Math.min(100, parseFloat(newScale) || 1.0));
+            newScale = Math.max(1, Math.min(30, Math.round(parseFloat(newScale) || 11)));
+            
+            // Skip redundant updates to save heavy array operations
+            if (newScale === lastScaleValue) return; 
+            
             currentScale = newScale;
+            lastScaleValue = newScale;
 
-            // Update input
-            scaleInput.value = newScale;
+            // Update inputs visually
+            if (scaleInput) scaleInput.value = newScale;
+            if (scaleDisplay) scaleDisplay.textContent = newScale;
 
-            // Apply scale to current splat by modifying the underlying scale data
-            // gsplat.js applies Math.exp() during PLY loading, so data.scales contains LINEAR values
-            // To multiply visual size by factor f, we multiply the scale values directly
             if (currentSplat && currentSplat.data && currentSplat.data.scales && originalScales) {
-                console.log('[GaussianViewer] Updating gaussian scales with factor:', newScale);
-
                 const data = currentSplat.data;
                 let scales = data.scales;
                 const detached = data.detached || !scales || scales.buffer.byteLength === 0;
 
                 if (detached) {
-                    if (!cachedSplatData) {
-                        console.warn('[GaussianViewer] Cannot reattach splat data - cached buffers missing');
-                        return;
-                    }
+                    if (!cachedSplatData) return;
                     const newScales = new Float32Array(originalScales.length);
                     for (let i = 0; i < newScales.length; i++) {
                         newScales[i] = originalScales[i] * newScale;
@@ -1665,136 +1506,76 @@
                     );
                     scales = data.scales;
                 } else {
-                    // Apply scale factor by multiplying (scales are in linear space)
                     for (let i = 0; i < scales.length; i++) {
                         scales[i] = originalScales[i] * newScale;
                     }
                 }
 
-                // Mark data as changed to trigger GPU re-upload
-                // gsplat.js checks data.changed and data.detached
+                // Smoothly flag engine for redraw instead of violently deleting the mesh
                 data.changed = true;
                 data.detached = false;
-                console.log('[GaussianViewer] Set data.changed=true, data.detached=false');
 
-                // Get the render data (could be _renderData or renderData)
                 const renderData = renderer._renderData || renderer.renderData;
-                if (renderData) {
-                    console.log('[GaussianViewer] Found renderData, keys:', Object.keys(renderData).join(', '));
-
-                    // Mark the splat as dirty
-                    if (renderData.markDirty) {
-                        renderData.markDirty(currentSplat);
-                        console.log('[GaussianViewer] Called markDirty()');
-                    }
-
-                    // Try forcing the flags directly
+                if (renderData && renderData.markDirty) {
+                    renderData.markDirty(currentSplat);
                     renderData.dataChanged = true;
-                    console.log('[GaussianViewer] Set renderData.dataChanged = true');
-
-                    // Check needsRebuild status
-                    console.log('[GaussianViewer] renderData.needsRebuild:', renderData.needsRebuild);
-                    console.log('[GaussianViewer] renderData._updating size:', renderData._updating?.size);
-                    console.log('[GaussianViewer] renderData._dirty size:', renderData._dirty?.size);
-                } else {
-                    console.log('[GaussianViewer] No renderData found on renderer');
-                    console.log('[GaussianViewer] renderer keys:', Object.keys(renderer).join(', '));
                 }
 
-                // Also dispatch change event (triggers scene to pick up changes)
                 if (currentSplat.dispatchEvent && currentSplat._changeEvent) {
                     currentSplat.dispatchEvent(currentSplat._changeEvent);
-                    console.log('[GaussianViewer] Dispatched change event');
                 }
-
-                // Throttled force refresh by removing and re-adding the splat to scene
-                // This is a workaround for gsplat.js not supporting dynamic scale updates
-                if (scene && scene.removeObject && scene.addObject) {
-                    lastScaleValue = newScale;  // Always update to latest value
-
-                    if (!scaleUpdatePending) {
-                        scaleUpdatePending = true;
-                        const splatToRefresh = currentSplat;  // Capture reference
-
-                        // Delay the refresh to avoid flickering during slider drag
-                        setTimeout(() => {
-                            scaleUpdatePending = false;
-
-                            // Only refresh if splat is still current
-                            if (splatToRefresh === currentSplat) {
-                                console.log('[GaussianViewer] Forcing refresh by re-adding splat to scene');
-                                scene.removeObject(splatToRefresh);
-                                scene.addObject(splatToRefresh);
-                                console.log('[GaussianViewer] Splat re-added to scene');
-                            } else {
-                                console.log('[GaussianViewer] Skipping refresh, splat changed during delay');
-                            }
-                        }, 150); // 150ms debounce for smoother dragging
-                    }
-                }
-
-                if (scales.length > 0 && originalScales.length > 0) {
-                    console.log('[GaussianViewer] Scale update complete. New scale[0]:', scales[0].toFixed(6),
-                                'original[0]:', originalScales[0].toFixed(6), 'multiplier:', newScale);
-                } else {
-                    console.log('[GaussianViewer] Scale update complete. Empty scales array.');
-                }
-            } else if (currentSplat) {
-                console.log('[GaussianViewer] Cannot update scales - missing data or originalScales');
-                console.log('[GaussianViewer] currentSplat.data:', !!currentSplat.data);
-                console.log('[GaussianViewer] currentSplat.data.scales:', !!(currentSplat.data && currentSplat.data.scales));
-                console.log('[GaussianViewer] originalScales:', !!originalScales);
             }
         }
 
-        scaleInput.addEventListener('change', (e) => updateGaussianScale(e.target.value));
+        const dynamicScaleToggle = document.getElementById('dynamicScaleToggle');
+        if (dynamicScaleToggle) {
+            dynamicScaleToggle.addEventListener('change', (e) => {
+                isDynamicScaleEnabled = e.target.checked;
+                if (isDynamicScaleEnabled) {
+                    updateBaseDistance();
+                }
+            });
+        }
+
+        // Bind Real-Time Dragging (Manually touching the slider overrides Dynamic mode)
+        if (scaleInput) {
+            scaleInput.addEventListener('input', (e) => {
+                if (dynamicScaleToggle && dynamicScaleToggle.checked) {
+                    dynamicScaleToggle.checked = false;
+                    isDynamicScaleEnabled = false;
+                }
+                updateGaussianScale(e.target.value);
+            });
+        }
+
+        // Auto Button (Restores Auto-Scaling Defaults AND re-engages Dynamic scale)
+        const setAutoScale = () => {
+            if (dynamicScaleToggle) {
+                dynamicScaleToggle.checked = true;
+                isDynamicScaleEnabled = true;
+                updateBaseDistance();
+            }
+            updateGaussianScale(11);
+        };
+        if (autoScaleBtn) autoScaleBtn.addEventListener('click', setAutoScale);
+        // ---------------------------------------------
+
 
         const focalScaleInput = document.getElementById('focalScale');
         const focalScaleValue = document.getElementById('focalScaleValue');
 
         function applyFocalScale(value) {
-            console.log('[GaussianViewer] ===== APPLYING FOCAL SCALE =====');
-            console.log(`[GaussianViewer] Input value: ${value}`);
-            
             const scale = Math.max(0.2, Math.min(3.0, parseFloat(value) || 1.0));
-            console.log(`[GaussianViewer] Clamped scale: ${scale}`);
-            
             focalScaleInput.value = scale;
             focalScaleValue.value = scale;
             
             const baseFx = baseFocalLength || camera?.data?.fx || DEFAULT_FOCAL_LENGTH;
             const baseFy = baseFocalY || camera?.data?.fy || DEFAULT_FOCAL_LENGTH;
             
-            console.log(`[GaussianViewer] Base focal lengths: baseFx=${baseFx}, baseFy=${baseFy}`);
-            console.log(`[GaussianViewer] Using base: baseFocalLength=${baseFocalLength}, baseFocalY=${baseFocalY}`);
-            console.log(`[GaussianViewer] Fallback base: camera.data.fx=${camera?.data?.fx}, camera.data.fy=${camera?.data?.fy}`);
-            console.log(`[GaussianViewer] DEFAULT_FOCAL_LENGTH=${DEFAULT_FOCAL_LENGTH}`);
-            
             if (camera?.data) {
-                const oldFx = camera.data.fx;
-                const oldFy = camera.data.fy;
-                
                 camera.data.fx = baseFx * scale;
                 camera.data.fy = baseFy * scale;
-                
-                console.log(`[GaussianViewer] Updated focal lengths:`);
-                console.log(`  - Old: fx=${oldFx}, fy=${oldFy}`);
-                console.log(`  - New: fx=${camera.data.fx}, fy=${camera.data.fy}`);
-                console.log(`  - Scale factor: ${scale}x`);
-                console.log(`  - Difference: dx=${(camera.data.fx - oldFx).toFixed(4)}, dy=${(camera.data.fy - oldFy).toFixed(4)}`);
-                
-                // Calculate and log new FOV
-                if (renderer?.canvas) {
-                    const canvasHeight = renderer.canvas.height;
-                    const newFovY = 2 * Math.atan(canvasHeight / (2 * camera.data.fy));
-                    const newFovYDeg = newFovY * 180 / Math.PI;
-                    console.log(`  - Canvas height: ${canvasHeight}`);
-                    console.log(`  - New FOV Y: ${newFovYDeg.toFixed(2)} degrees`);
-                }
-            } else {
-                console.warn('[GaussianViewer] WARNING: camera.data not available, cannot apply focal scale');
-            }
-            console.log('[GaussianViewer] =====================================');
+            } 
         }
 
         focalScaleInput.addEventListener('input', (e) => applyFocalScale(e.target.value));
@@ -1824,7 +1605,6 @@
             const pos = camera.position;
             const toDeg = (rad) => (rad * 180 / Math.PI).toFixed(2);
 
-            // If it's our custom PreciseOrbitControls, use its tracked orientation
             let pitch = 0, yaw = 0, roll = 0;
             if (controls.currentAlpha !== undefined) {
                 pitch = -controls.currentBeta;
@@ -1849,15 +1629,9 @@
             });
         }
 
-        if (savePresetBtn) {
-            savePresetBtn.addEventListener('click', saveCurrentPreset);
-        }
-        if (applyPresetBtn) {
-            applyPresetBtn.addEventListener('click', applySelectedPreset);
-        }
-        if (deletePresetBtn) {
-            deletePresetBtn.addEventListener('click', deleteSelectedPreset);
-        }
+        if (savePresetBtn) savePresetBtn.addEventListener('click', saveCurrentPreset);
+        if (applyPresetBtn) applyPresetBtn.addEventListener('click', applySelectedPreset);
+        if (deletePresetBtn) deletePresetBtn.addEventListener('click', deleteSelectedPreset);
         if (presetSelectEl) {
             presetSelectEl.addEventListener('change', () => {
                 const selected = presetOptionMap.get(presetSelectEl.value);
@@ -1869,8 +1643,6 @@
 
         refreshPresetOptions();
 
-
-        // Event listeners
         document.getElementById('resetCamera').addEventListener('click', resetCamera);
         document.getElementById('setCamera').addEventListener('click', setCameraParams);
 
@@ -1878,17 +1650,8 @@
         const toggleHelpBtn = document.getElementById('toggleHelp');
         const closeHelpBtn = document.getElementById('closeHelp');
 
-        if (toggleHelpBtn && helpPanel) {
-            toggleHelpBtn.addEventListener('click', () => {
-                helpPanel.classList.toggle('hidden');
-            });
-        }
-
-        if (closeHelpBtn && helpPanel) {
-            closeHelpBtn.addEventListener('click', () => {
-                helpPanel.classList.add('hidden');
-            });
-        }
+        if (toggleHelpBtn && helpPanel) toggleHelpBtn.addEventListener('click', () => helpPanel.classList.toggle('hidden'));
+        if (closeHelpBtn && helpPanel) closeHelpBtn.addEventListener('click', () => helpPanel.classList.add('hidden'));
 
         const overlayAlphaInput = document.getElementById('overlayAlpha');
         const overlayAlphaValue = document.getElementById('overlayAlphaValue');
@@ -1904,21 +1667,13 @@
             }
         }
 
-        if (overlayAlphaInput) {
-            overlayAlphaInput.addEventListener('input', (e) => applyOverlayAlpha(e.target.value));
-        }
-        if (overlayAlphaValue) {
-            overlayAlphaValue.addEventListener('change', (e) => applyOverlayAlpha(e.target.value));
-        }
+        if (overlayAlphaInput) overlayAlphaInput.addEventListener('input', (e) => applyOverlayAlpha(e.target.value));
+        if (overlayAlphaValue) overlayAlphaValue.addEventListener('change', (e) => applyOverlayAlpha(e.target.value));
 
-        // Listen for messages from parent
         window.addEventListener('message', async (event) => {
             const { type, data, filename, extrinsics, intrinsics, overlay_image } = event.data;
 
             if (type === 'LOAD_MESH_DATA' && data) {
-                console.log('[GaussianViewer] Received LOAD_MESH_DATA, size:', data.byteLength);
-                console.log('[GaussianViewer] Extrinsics:', extrinsics);
-                console.log('[GaussianViewer] Intrinsics:', intrinsics);
                 currentMeshKey = filename || null;
                 refreshPresetOptions();
 
@@ -1936,6 +1691,12 @@
                 await loadPLYFromData(data, filename || 'gaussian.ply', extrinsics, intrinsics);
                 applyFocalScale(focalScaleInput.value);
                 scheduleFrameLayoutUpdate();
+                
+                // ADDED: Force Auto Scale on every new mesh load to ensure UI and renderer are synced
+                setTimeout(() => {
+                    setAutoScale();
+                }, 500);
+
             } else if (type === 'LOAD_MESH_DATA' && !data) {
                 console.warn('[GaussianViewer] LOAD_MESH_DATA missing data buffer');
             } else if (type === 'APPLY_CAMERA_STATE' && event.data?.camera_state) {
@@ -1944,21 +1705,17 @@
                 const requestId = event.data.request_id;
                 const resolution = event.data.output_resolution;
                 const aspectRatio = event.data.output_aspect_ratio;
-                console.log('[GaussianViewer] RENDER_REQUEST:', requestId, resolution, aspectRatio);
                 renderForRequest(requestId, resolution, aspectRatio);
             } else if (type === 'OUTPUT_SETTINGS') {
                 const resolution = event.data?.output_resolution;
                 const aspectRatio = event.data?.output_aspect_ratio;
                 updateOutputSettings(resolution, aspectRatio);
-                console.log('[GaussianViewer] Updated output settings:', outputSettings);
             } else if (type === 'PRESET_CONFIRM_RESULT' && event.data?.request_id) {
                 const resolver = pendingPresetConfirmResolvers.get(event.data.request_id);
                 if (resolver) {
                     pendingPresetConfirmResolvers.delete(event.data.request_id);
                     resolver(event.data.confirmed === true);
                 }
-            } else if (type) {
-                console.log('[GaussianViewer] Unhandled message type:', type);
             }
         });
 
