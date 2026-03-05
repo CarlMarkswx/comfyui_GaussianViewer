@@ -443,14 +443,11 @@
                 camera.data.fy = DEFAULT_FOCAL_LENGTH;
                 baseFocalLength = camera.data.fx;
                 baseFocalY = camera.data.fy;
-                console.log(`[GaussianViewer] Applied focal length: fx=${camera.data.fx}, fy=${camera.data.fy}`);
-                console.log(`[GaussianViewer] Base focal length stored: baseFx=${baseFocalLength}, baseFy=${baseFocalY}`);
                 
                 // Calculate and log FOV for default settings
                 const canvasHeight = canvas.clientHeight || 512;
                 const defaultFovY = 2 * Math.atan(canvasHeight / (2 * camera.data.fy));
                 const defaultFovYDeg = defaultFovY * 180 / Math.PI;
-                console.log(`[GaussianViewer] Default FOV Y (with canvas height ${canvasHeight}): ${defaultFovYDeg.toFixed(2)} degrees`);
 
                 // Handle resize
                 const resize = () => {
@@ -536,11 +533,6 @@
                             if (controls?.setCameraTarget) {
                                 controls.setCameraTarget(nextTarget);
                             }
-                            console.log('[GaussianViewer] Dolly forward', {
-                                step,
-                                distance,
-                                target: nextTarget
-                            });
                         }
                     }
                 }, { passive: true });
@@ -619,10 +611,6 @@
         function setCameraFromExtrinsics(extrinsics, intrinsics, splat) {
             if (!camera || !controls) return;
 
-            console.log('[GaussianViewer] Setting camera from extrinsics/intrinsics');
-            console.log('[GaussianViewer] Extrinsics:', JSON.stringify(extrinsics));
-            console.log('[GaussianViewer] Intrinsics:', JSON.stringify(intrinsics));
-
             let camPosX = 0, camPosY = 0, camPosZ = 0;
 
             if (extrinsics && Array.isArray(extrinsics) && extrinsics.length === 4) {
@@ -636,8 +624,6 @@
                 camPosX = -(R[0][0] * t[0] + R[1][0] * t[1] + R[2][0] * t[2]);
                 camPosY = -(R[0][1] * t[0] + R[1][1] * t[1] + R[2][1] * t[2]);
                 camPosZ = -(R[0][2] * t[0] + R[1][2] * t[1] + R[2][2] * t[2]);
-
-                console.log('[GaussianViewer] Computed camera position from extrinsics:', camPosX, camPosY, camPosZ);
             }
 
             let targetZ = 2; // default
@@ -649,15 +635,11 @@
                 const imageWidth = cx * 2;  
                 const imageHeight = cy * 2; 
 
-                console.log('[GaussianViewer] Intrinsics: fx=', fx, 'fy=', fy, 'cx=', cx, 'cy=', cy);
-                console.log('[GaussianViewer] Image dimensions (from intrinsics):', imageWidth, 'x', imageHeight);
-
                 isResolutionLocked = true;
                 
                 const containerWidth = canvas.clientWidth || 512;
                 const containerHeight = canvas.clientHeight || 512;
 
-                console.log(`[GaussianViewer] Locking resolution to native: ${imageWidth}x${imageHeight}`);
                 renderer.setSize(imageWidth, imageHeight);
                 
                 nativeAspect = imageWidth / imageHeight;
@@ -669,17 +651,7 @@
                 baseFocalY = fy;
 
                 gaussianScaleCompensation = computeScaleCompensation(imageWidth, containerWidth);
-
-                console.log('[GaussianViewer] Native resolution:', imageWidth, 'x', imageHeight);
-                console.log('[GaussianViewer] Container size:', containerWidth, 'x', containerHeight);
-                console.log('[GaussianViewer] Gaussian scale compensation (with boost):', gaussianScaleCompensation.toFixed(2), 'x');
-
-                const fovY = 2 * Math.atan(imageHeight / (2 * fy));
-                const fovYDeg = fovY * 180 / Math.PI;
-                console.log('[GaussianViewer] Calculated FOV:', fovYDeg, 'degrees');
-
                 targetZ = Math.max(1, fy / imageHeight * 2);
-                console.log('[GaussianViewer] Target Z distance:', targetZ);
             }
 
             let targetX = 0, targetY = 0;
@@ -693,9 +665,6 @@
                 const minZ = center.z - size.z / 2;
                 orbitZ = minZ * 1.5;  
 
-                console.log('[GaussianViewer] Scene center:', center.x, -center.y, center.z);
-                console.log('[GaussianViewer] Closest point Z:', minZ.toFixed(1));
-                console.log('[GaussianViewer] Orbit center Z:', orbitZ.toFixed(1), '(closest + 50%)');
                 lastSceneCenter = center;
                 lastSceneSize = size;
             }
@@ -717,10 +686,6 @@
             camera.position.z = camPosZ;
 
             controls.setCameraTarget(targetPos);
-
-            console.log('[GaussianViewer] Camera set to position:', camPosX, camPosY, camPosZ);
-            console.log('[GaussianViewer] Looking at target:', targetX, targetY, targetZ);
-            console.log('[GaussianViewer] This should match the original input image view');
         }
 
         function buildMeshSignature(filename, intrinsics) {
@@ -763,7 +728,6 @@
                 }
                 
                 if (scene.objects && scene.objects.length > 0) {
-                    console.log('[GaussianViewer] Clearing', scene.objects.length, 'existing objects from scene');
                     while (scene.objects.length > 0) {
                         scene.removeObject(scene.objects[0]);
                     }
@@ -783,9 +747,18 @@
                 const blob = new Blob([arrayBuffer], { type: 'application/octet-stream' });
                 const blobUrl = URL.createObjectURL(blob);
 
-                await SPLAT.PLYLoader.LoadAsync(blobUrl, scene);
-
-                URL.revokeObjectURL(blobUrl);
+                try {
+                    // Try the V2 blob method
+                    await SPLAT.PLYLoader.LoadAsync(blobUrl, scene);
+                    setTimeout(() => { URL.revokeObjectURL(blobUrl); }, 30000);
+                } catch (blobError) {
+                    // FALLBACK: If browser Web Worker sandbox blocks the blob: URL with "failed to fetch"
+                    // we immediately clean up and fetch the file directly via URL (V1 method)
+                    console.warn('[GaussianViewer] Blob URL fetch failed (likely Web Worker sandbox policy). Falling back to direct URL...', blobError);
+                    URL.revokeObjectURL(blobUrl);
+                    const directUrl = `/view?filename=${encodeURIComponent(filename)}&type=output&subfolder=`;
+                    await SPLAT.PLYLoader.LoadAsync(directUrl, scene);
+                }
 
                 if (scene.objects && scene.objects.length > 0) {
                     currentSplat = scene.objects[scene.objects.length - 1];
@@ -793,8 +766,6 @@
                     if (currentSplat.bounds) {
                         const center = currentSplat.bounds.center();
                         const size = currentSplat.bounds.size();
-                        console.log('[GaussianViewer] Scene bounds center:', center.x, center.y, center.z);
-                        console.log('[GaussianViewer] Scene bounds size:', size.x, size.y, size.z);
                     }
 
                     if (currentSplat.data && currentSplat.data.positions && currentSplat.data.rotations && currentSplat.data.colors && currentSplat.data.selection) {
@@ -810,14 +781,11 @@
 
                     if (currentSplat.data && currentSplat.data.scales) {
                         const scales = currentSplat.data.scales;
-                        const numGaussians = scales.length / 3;
-                        let minScale = Infinity, maxScale = -Infinity, sumScale = 0;
 
                         originalScales = new Float32Array(scales.length);
                         for (let i = 0; i < scales.length; i++) {
                             originalScales[i] = scales[i] * gaussianScaleCompensation;
                         }
-                        console.log('[GaussianViewer] Stored compensated scales (factor:', gaussianScaleCompensation.toFixed(2), 'x)');
 
                         // NATIVELY APPLY DEFAULT SCALE TO PREVENT WEBGL BLANK SCREENS ON LOAD
                         for (let i = 0; i < scales.length; i++) {
@@ -825,27 +793,9 @@
                         }
 
                         currentSplat.data.changed = true;
-
-                        for (let i = 0; i < scales.length; i++) {
-                            const s = scales[i];
-                            minScale = Math.min(minScale, s);
-                            maxScale = Math.max(maxScale, s);
-                            sumScale += s;
-                        }
-
-                        const avgScale = sumScale / scales.length;
-                        console.log('[GaussianViewer] === GAUSSIAN SCALE DEBUG (after compensation) ===');
-                        console.log('[GaussianViewer] Number of Gaussians:', numGaussians);
-                        console.log('[GaussianViewer] Compensated scale min:', minScale.toFixed(6));
-                        console.log('[GaussianViewer] Compensated scale max:', maxScale.toFixed(6));
-                        console.log('[GaussianViewer] Compensated scale avg:', avgScale.toFixed(6));
-                        console.log('[GaussianViewer] =================================================');
                     } else {
-                        console.log('[GaussianViewer] No scales data found on splat object');
                         originalScales = null;
                     }
-
-                    // No need to dispatch a manual scale update since we injected it straight into the array above!
                 }
 
                 if ((extrinsics || intrinsics) && !initialCameraData) {
@@ -908,13 +858,10 @@
                         controls.resetRoll();
                     }
 
-                    console.log('[GaussianViewer] Reset camera to position:', pos.x, pos.y, pos.z);
-                    console.log('[GaussianViewer] Reset camera target:', initialCameraData.target?.x, initialCameraData.target?.y, initialCameraData.target?.z);
                 } else {
                     camera.position.x = 0;
                     camera.position.y = 0;
                     camera.position.z = 5;
-                    console.log('[GaussianViewer] Reset camera to default position (0, 0, 5)');
                     if (controls.resetRoll) {
                         controls.resetRoll();
                     }
@@ -963,8 +910,6 @@
                     renderer.render(scene, camera);
                 }
 
-                console.log('[GaussianViewer] Capturing screenshot via toDataURL:', width, 'x', height);
-
                 const finalCanvas = getCanvasWithBlackBackground(canvas);
                 const dataUrl = finalCanvas.toDataURL('image/png');
 
@@ -975,7 +920,6 @@
                 }, '*');
 
                 resumeAnimationLoop();
-                console.log('[GaussianViewer] Screenshot captured successfully');
             } catch (err) {
                 console.error('[GaussianViewer] Screenshot error:', err);
                 resumeAnimationLoop();
@@ -1523,7 +1467,6 @@
         const scaleDisplay = document.getElementById('gaussianScaleDisplay');
         const autoScaleBtn = document.getElementById('autoScaleBtn');
         let currentScale = 11.0; 
-        let scaleUpdatePending = false;
         let lastScaleValue = -1; // Force initialize on load
 
         function updateGaussianScale(newScale) {
@@ -1568,6 +1511,7 @@
                     }
                 }
 
+                // Smoothly flag engine for redraw instead of violently deleting the mesh
                 data.changed = true;
                 data.detached = false;
 
@@ -1579,20 +1523,6 @@
 
                 if (currentSplat.dispatchEvent && currentSplat._changeEvent) {
                     currentSplat.dispatchEvent(currentSplat._changeEvent);
-                }
-
-                if (scene && scene.removeObject && scene.addObject) {
-                    if (!scaleUpdatePending) {
-                        scaleUpdatePending = true;
-                        const splatToRefresh = currentSplat;
-                        setTimeout(() => {
-                            scaleUpdatePending = false;
-                            if (splatToRefresh === currentSplat) {
-                                scene.removeObject(splatToRefresh);
-                                scene.addObject(splatToRefresh);
-                            }
-                        }, 150); 
-                    }
                 }
             }
         }
