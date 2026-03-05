@@ -1,4 +1,4 @@
-# ComfyUI-GaussianViewer
+# ComfyUI_GaussianViewer
 
 [中文](README.md) | [English](README_EN.md)
 
