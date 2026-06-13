@@ -4,14 +4,20 @@
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-## Version Downloads
+## System Requirements
 
-This repository keeps two independent ComfyUI-compatible versions in the same GitHub project, with this README as the shared entry point:
+- ComfyUI (a recent version is recommended)
+- Python packages: numpy / torch / Pillow (usually shipped with ComfyUI)
 
-- Older ComfyUI: download [`legacy-comfyui`](https://github.com/CarlMarkswx/comfyui_GaussianViewer/archive/refs/heads/legacy-comfyui.zip)
-- Newer ComfyUI: download [`new-comfyui`](https://github.com/CarlMarkswx/comfyui_GaussianViewer/archive/refs/heads/new-comfyui.zip)
+If your ComfyUI is older and the node renders truncated (the node frame is smaller than its content, and the content overflows), the ComfyUI frontend is likely too old. Two ways to fix:
 
-Use the legacy version if your ComfyUI has not been updated yet. Use the new version if your ComfyUI is already updated.
+1. **Recommended**: upgrade to the latest ComfyUI
+2. **Fallback**: pin the frontend version via the launcher flag:
+   ```bash
+   python main.py --front-end-version Comfy-Org/ComfyUI_frontend@1.38.0
+   ```
+
+The plugin prints the detected frontend version to the console at load time, which helps when reporting issues.
 
 An all-in-one ComfyUI node plugin for interactive Gaussian Splatting PLY previews and high-quality render outputs.
 
