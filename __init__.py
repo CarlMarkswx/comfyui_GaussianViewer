@@ -11,6 +11,20 @@ high-quality image output capabilities.
 # Shared camera params cache - must be at module level for persistence
 CAMERA_PARAMS_BY_KEY = {}
 
+
+def _log_frontend_version():
+    try:
+        import comfyui_frontend_package
+        version = getattr(comfyui_frontend_package, "__version__", None)
+        if version:
+            print(f"[GaussianViewer] ComfyUI frontend version: {version}")
+    except ImportError:
+        pass
+
+
+_log_frontend_version()
+
+
 from .gaussian_viewer import GaussianViewerNode, NODE_CLASS_MAPPINGS as VIEWER_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as VIEWER_DISPLAY_MAPPINGS
 from .extrinsics_to_pose import ExtrinsicsToPoseNode, NODE_CLASS_MAPPINGS as POSE_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as POSE_DISPLAY_MAPPINGS
 
