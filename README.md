@@ -4,14 +4,20 @@
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-## 版本下载
+## 系统要求
 
-本仓库在同一个 GitHub 项目中保留两个互不干扰的 ComfyUI 版本，README 共用这一份说明：
+- ComfyUI（建议使用较新的版本）
+- Python 包：numpy / torch / Pillow（通常随 ComfyUI 安装）
 
-- 旧版 ComfyUI：下载 [`legacy-comfyui`](https://github.com/CarlMarkswx/comfyui_GaussianViewer/archive/refs/heads/legacy-comfyui.zip)
-- 新版 ComfyUI：下载 [`new-comfyui`](https://github.com/CarlMarkswx/comfyui_GaussianViewer/archive/refs/heads/new-comfyui.zip)
+如果你的 ComfyUI 比较老，节点显示出现裁切（节点框比内容小、内容溢出），通常是 ComfyUI 前端版本过旧。两种解决方案：
 
-如果你的 ComfyUI 还没有更新，请使用旧版；如果已经更新到新版 ComfyUI，请使用新版。
+1. **推荐**：升级到最新 ComfyUI
+2. **兜底**：用 `--front-end-version` 启动参数锁定前端版本：
+   ```bash
+   python main.py --front-end-version Comfy-Org/ComfyUI_frontend@1.38.0
+   ```
+
+启动 ComfyUI 后，本插件会在控制台打印当前的 frontend 版本，便于排查问题。
 
 为 ComfyUI 提供高斯泼溅（Gaussian Splatting）PLY 文件的交互式 3D 预览和高质量图像输出功能。
 
