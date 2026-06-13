@@ -9,10 +9,11 @@
 - ComfyUI（建议使用较新的版本）
 - Python 包：numpy / torch / Pillow（通常随 ComfyUI 安装）
 
-如果你的 ComfyUI 比较老，节点显示出现裁切（节点框比内容小、内容溢出），通常是 ComfyUI 前端版本过旧。两种解决方案：
+如果节点显示被压缩成窄窄一条（控件挤在左侧、右半部分大片空白），通常是 ComfyUI 前端的 **Node V2 自动缩放**把节点宽度固定成了不适合本插件的尺寸。三种解决方案，从直接到兜底：
 
-1. **推荐**：升级到最新 ComfyUI
-2. **兜底**：用 `--front-end-version` 启动参数锁定前端版本：
+1. **推荐**：在 ComfyUI 设置面板中关闭「Node V2 自动缩放」（Auto-resize Node V2），然后刷新浏览器。再次打开该选项时，节点会再次被压窄。
+2. **次选**：升级到较新的 ComfyUI（后续版本可能修复 Node V2 与本插件的尺寸冲突）。
+3. **兜底**：用 `--front-end-version` 启动参数锁定一个不启用 Node V2 的旧前端：
    ```bash
    python main.py --front-end-version Comfy-Org/ComfyUI_frontend@1.38.0
    ```

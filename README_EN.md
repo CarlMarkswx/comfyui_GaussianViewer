@@ -9,10 +9,11 @@
 - ComfyUI (a recent version is recommended)
 - Python packages: numpy / torch / Pillow (usually shipped with ComfyUI)
 
-If your ComfyUI is older and the node renders truncated (the node frame is smaller than its content, and the content overflows), the ComfyUI frontend is likely too old. Two ways to fix:
+If the node renders compressed into a narrow strip (controls crammed on the left, large empty space on the right), it's typically the ComfyUI frontend's **Node V2 auto-resize** locking the node width to a size that doesn't fit this plugin. Three ways to fix, from direct to fallback:
 
-1. **Recommended**: upgrade to the latest ComfyUI
-2. **Fallback**: pin the frontend version via the launcher flag:
+1. **Recommended**: turn off "Auto-resize Node V2" in the ComfyUI settings panel, then refresh the browser. Re-enabling the option will compress the node again.
+2. **Alternative**: upgrade to a newer ComfyUI (a later release may fix the Node V2 sizing conflict with this plugin).
+3. **Fallback**: pin the frontend to an older version that doesn't ship Node V2 via the launcher flag:
    ```bash
    python main.py --front-end-version Comfy-Org/ComfyUI_frontend@1.38.0
    ```
