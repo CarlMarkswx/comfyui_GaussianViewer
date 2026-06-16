@@ -1,10 +1,19 @@
+# Python
 __pycache__/
-*.pyc
-*.log
-.DS_Store
-docs/AI_ANGLE_PRESETS_PLAN.md
+*.py[cod]
 .pytest_cache/
 .mypy_cache/
-.vscode/
+
+# Logs and temporary files
+*.log
 *.tmp
 *.bak
+
+# OS and editor local files
+.DS_Store
+.vscode/
+.claude/
+
+# Local planning docs
+docs/AI_ANGLE_PRESETS_PLAN.md
+docs/superpowers/
