@@ -200,12 +200,30 @@ app.registerExtension({
                 // Store reference to node for dynamic resizing
                 const node = this;
                 const WIDGET_OFFSET = 100;
+                const MIN_NODE_WIDTH = 512;
                 const MIN_WIDGET_HEIGHT = 180;
+                let widget = null;
+                const getRenderedNodeWidth = () => {
+                    const nodeId = node.id != null ? String(node.id) : "";
+                    const selector = nodeId ? `[data-node-id="${nodeId.replace(/"/g, '\\"')}"]` : "";
+                    const nodeElement = selector ? document.querySelector(selector) : null;
+                    const widthElement = nodeElement?.querySelector?.('[data-testid="node-inner-wrapper"]') || nodeElement;
+                    const rectWidth = widthElement?.getBoundingClientRect?.().width || 0;
+                    const scale = app.canvas?.ds?.scale || 1;
+                    const renderedWidth = rectWidth / scale;
+                    return Number.isFinite(renderedWidth) && renderedWidth > 0 ? renderedWidth : null;
+                };
+                const getWidgetWidth = () => {
+                    const renderedWidth = getRenderedNodeWidth() || 0;
+                    const nodeWidth = Number(node.size?.[0]) || 0;
+                    return Math.max(MIN_NODE_WIDTH, Math.floor(renderedWidth), Math.floor(nodeWidth));
+                };
                 const getWidgetHeight = () => {
                     return Math.max(MIN_WIDGET_HEIGHT, Math.floor((node.size?.[1] || 580) - WIDGET_OFFSET));
                 };
                 const syncWidgetBounds = () => {
                     const widgetHeight = getWidgetHeight();
+                    const widgetWidth = getWidgetWidth();
                     container.style.width = "100%";
                     container.style.maxWidth = "none";
                     container.style.height = `${widgetHeight}px`;
@@ -214,16 +232,23 @@ app.registerExtension({
                     iframe.style.width = "100%";
                     iframe.style.height = "100%";
                     infoPanel.style.width = "100%";
+                    if (widget) {
+                        const margin = Number(widget.margin) || 0;
+                        widget.width = widgetWidth;
+                        widget.computedHeight = widgetHeight + margin * 2;
+                    }
+                    return [widgetWidth, widgetHeight];
                 };
 
                 // Add widget with required options
-                const addedWidget = this.addDOMWidget("preview_gaussian_v2", "GAUSSIAN_PREVIEW_V2", container, {
+                widget = this.addDOMWidget("preview_gaussian_v2", "GAUSSIAN_PREVIEW_V2", container, {
                     getValue() { return ""; },
                     setValue(v) { },
                     getMinHeight: () => MIN_WIDGET_HEIGHT,
                     getHeight: () => getWidgetHeight(),
                     onResize: () => syncWidgetBounds(),
                     afterResize: () => syncWidgetBounds(),
+                    onDraw: () => syncWidgetBounds(),
                 });
 
                 // Keep the widget on ComfyUI's DOM layout path. Defining
@@ -254,7 +279,6 @@ app.registerExtension({
                         return;
                     }
 
-                    const MIN_NODE_WIDTH = 512;
                     const MAX_NODE_WIDTH = 800;
                     const MIN_VIEWER_HEIGHT = 180;
                     const MAX_VIEWER_HEIGHT = 900;
@@ -579,6 +603,7 @@ app.registerExtension({
                 // Set initial node size
                 this.setSize([512, 580]);
                 this.resizable = true;
+                syncWidgetBounds();
 
                 const onResize = this.onResize;
                 this.onResize = function(size) {
@@ -587,6 +612,12 @@ app.registerExtension({
                     if (this.setDirtyCanvas) {
                         this.setDirtyCanvas(true, true);
                     }
+                };
+
+                const onDrawForeground = this.onDrawForeground;
+                this.onDrawForeground = function(ctx) {
+                    syncWidgetBounds();
+                    onDrawForeground?.apply(this, arguments);
                 };
 
                 const onRemoved = this.onRemoved;

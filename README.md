@@ -9,11 +9,11 @@
 - ComfyUI（建议使用较新的版本）
 - Python 包：numpy / torch / Pillow（通常随 ComfyUI 安装）
 
-如果节点显示被压缩成窄窄一条（控件挤在左侧、右半部分大片空白），通常是 ComfyUI 前端的 **Node V2 自动缩放**把节点宽度固定成了不适合本插件的尺寸。三种解决方案，从直接到兜底：
+如果节点显示被压缩成窄窄一条（控件挤在左侧、右半部分大片空白），通常和 ComfyUI 前端的 **现代节点设计（Nodes 2.0）** DOM/Vue 渲染路径有关；同时开启 **自动缩放布局（Nodes 2.0）** 时更容易暴露旧版插件的 DOM widget 宽度同步问题。当前版本已主动同步 widget 尺寸；如果仍遇到类似问题，可按下面顺序排查：
 
-1. **推荐**：在 ComfyUI 设置面板中关闭「Node V2 自动缩放」（Auto-resize Node V2），然后刷新浏览器。再次打开该选项时，节点会再次被压窄。
-2. **次选**：升级到较新的 ComfyUI（后续版本可能修复 Node V2 与本插件的尺寸冲突）。
-3. **兜底**：用 `--front-end-version` 启动参数锁定一个不启用 Node V2 的旧前端：
+1. **推荐**：升级到最新版插件，并在浏览器中强制刷新 ComfyUI 前端缓存。
+2. **临时排查**：在 ComfyUI 设置面板中关闭「自动缩放布局（Nodes 2.0）」或「现代节点设计（Nodes 2.0）」，然后刷新浏览器。
+3. **兜底**：用 `--front-end-version` 启动参数锁定一个较旧前端：
    ```bash
    python main.py --front-end-version Comfy-Org/ComfyUI_frontend@1.38.0
    ```

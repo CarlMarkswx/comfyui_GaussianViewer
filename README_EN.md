@@ -9,11 +9,11 @@
 - ComfyUI (a recent version is recommended)
 - Python packages: numpy / torch / Pillow (usually shipped with ComfyUI)
 
-If the node renders compressed into a narrow strip (controls crammed on the left, large empty space on the right), it's typically the ComfyUI frontend's **Node V2 auto-resize** locking the node width to a size that doesn't fit this plugin. Three ways to fix, from direct to fallback:
+If the node renders compressed into a narrow strip (controls crammed on the left, large empty space on the right), it is usually related to ComfyUI's **Modern Node Design (Nodes 2.0)** DOM/Vue rendering path. Enabling **Auto Scale Layout (Nodes 2.0)** can make older plugin builds expose stale DOM widget width metadata. The current version actively syncs the widget size; if you still see the issue, try these steps:
 
-1. **Recommended**: turn off "Auto-resize Node V2" in the ComfyUI settings panel, then refresh the browser. Re-enabling the option will compress the node again.
-2. **Alternative**: upgrade to a newer ComfyUI (a later release may fix the Node V2 sizing conflict with this plugin).
-3. **Fallback**: pin the frontend to an older version that doesn't ship Node V2 via the launcher flag:
+1. **Recommended**: upgrade to the latest plugin version, then hard-refresh the ComfyUI browser tab to clear cached frontend files.
+2. **Temporary diagnostic**: turn off "Auto Scale Layout (Nodes 2.0)" or "Modern Node Design (Nodes 2.0)" in the ComfyUI settings panel, then refresh the browser.
+3. **Fallback**: pin the frontend to an older version via the launcher flag:
    ```bash
    python main.py --front-end-version Comfy-Org/ComfyUI_frontend@1.38.0
    ```
