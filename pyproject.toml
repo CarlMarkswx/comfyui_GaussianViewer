@@ -1,0 +1,37 @@
+[project]
+name = "gaussian-viewer"
+description = "Interactive Gaussian Splatting PLY preview and render nodes for ComfyUI."
+version = "1.0.0"
+license = { file = "LICENSE" }
+readme = "README_EN.md"
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+authors = [
+    { name = "CarlMarkswx" },
+]
+keywords = [
+    "comfyui",
+    "custom-node",
+    "gaussian-splatting",
+    "3d",
+    "viewer",
+    "rendering",
+]
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+[project.urls]
+Repository = "https://github.com/CarlMarkswx/comfyui_GaussianViewer"
+Documentation = "https://github.com/CarlMarkswx/comfyui_GaussianViewer#readme"
+"Bug Tracker" = "https://github.com/CarlMarkswx/comfyui_GaussianViewer/issues"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.comfy]
+PublisherId = "CarlMarkswx"
+DisplayName = "ComfyUI GaussianViewer"
